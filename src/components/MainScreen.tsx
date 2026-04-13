@@ -78,7 +78,10 @@ export function MainScreen({
   }, []);
 
   const detectURLType = (url: string): { type: URLType; url: string } | null => {
-    const trimmedUrl = url.trim();
+    let trimmedUrl = url.trim();
+    if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+      trimmedUrl = 'https://' + trimmedUrl;
+    }
     if (
       trimmedUrl.includes('youtube.com') ||
       trimmedUrl.includes('youtu.be') ||
