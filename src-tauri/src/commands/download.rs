@@ -6,7 +6,7 @@
 use crate::commands::{DownloadSummary, TrackInfo};
 use crate::utils::sidecar::{find_sidecar, kill_process, spawn_sidecar};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, State};
@@ -64,10 +64,16 @@ pub async fn download_tracks(
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    // Find yt-dlp sidecar
+    // Find sidecars
     let yt_dlp_path = find_sidecar("yt-dlp").map_err(|e| {
         format!(
             "yt-dlp not found. Make sure it's installed or bundled with the app: {}",
+            e
+        )
+    })?;
+    let ffmpeg_path = find_sidecar("ffmpeg").map_err(|e| {
+        format!(
+            "ffmpeg not found. Make sure it's installed or bundled with the app: {}",
             e
         )
     })?;
@@ -133,6 +139,7 @@ pub async fn download_tracks(
         // Build yt-dlp arguments
         let is_m4a = audio_format == "m4a";
         let fmt = if is_m4a { "m4a" } else { "mp3" };
+        let has_deezer_cover = track.album_cover_url.is_some();
 
         let output_template = format!(
             "{}/%(title)s.%(ext)s",
@@ -146,11 +153,6 @@ pub async fn download_tracks(
             "--audio-quality".to_string(),
             "0".to_string(),
         ];
-
-        // M4A supports embedded cover art natively
-        if is_m4a {
-            args.push("--embed-thumbnail".to_string());
-        }
 
         args.push("-o".to_string());
         args.push(output_template);
@@ -197,6 +199,15 @@ pub async fn download_tracks(
                         break;
                     }
                     continue;
+                }
+
+                // Embed Deezer album cover if available
+                if has_deezer_cover {
+                    if let Some(ref cover_url) = track.album_cover_url {
+                        let _ = embed_cover(
+                            &output_dir, &track.title, fmt, cover_url, &ffmpeg_path
+                        ).await;
+                    }
                 }
 
                 summary.successful += 1;
@@ -343,4 +354,96 @@ fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
 /// Escapes special characters in metadata values for ffmpeg.
 fn escape_metadata(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Downloads a cover image from Deezer and embeds it into the audio file using ffmpeg.
+async fn embed_cover(
+    output_dir: &str,
+    track_title: &str,
+    fmt: &str,
+    cover_url: &str,
+    ffmpeg_path: &Path,
+) -> Result<(), String> {
+    // Download cover image
+    let cover_bytes = reqwest::get(cover_url)
+        .await
+        .map_err(|e| format!("Failed to download cover: {}", e))?
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read cover bytes: {}", e))?;
+
+    let cover_path = PathBuf::from(output_dir).join("_cover_tmp.jpg");
+    std::fs::write(&cover_path, &cover_bytes)
+        .map_err(|e| format!("Failed to write cover: {}", e))?;
+
+    // Find the audio file (yt-dlp uses %(title)s which may sanitize the name)
+    let audio_path = find_audio_file(output_dir, track_title, fmt)?;
+    let tmp_path = audio_path.with_extension(format!("tmp.{}", fmt));
+
+    // Use ffmpeg to embed cover
+    let mut args = vec![
+        "-i".to_string(),
+        audio_path.to_string_lossy().to_string(),
+        "-i".to_string(),
+        cover_path.to_string_lossy().to_string(),
+        "-map".to_string(), "0:a".to_string(),
+        "-map".to_string(), "1:0".to_string(),
+        "-c".to_string(), "copy".to_string(),
+    ];
+
+    if fmt == "mp3" {
+        args.extend([
+            "-id3v2_version".to_string(), "3".to_string(),
+            "-metadata:s:v".to_string(), "title=Album cover".to_string(),
+            "-metadata:s:v".to_string(), "comment=Cover (front)".to_string(),
+        ]);
+    } else {
+        args.extend([
+            "-disposition:v:0".to_string(), "attached_pic".to_string(),
+        ]);
+    }
+
+    args.push("-y".to_string());
+    args.push(tmp_path.to_string_lossy().to_string());
+
+    let child = spawn_sidecar(ffmpeg_path, &args)?;
+    let output = child.wait_with_output().await
+        .map_err(|e| format!("ffmpeg cover embed failed: {}", e))?;
+
+    // Clean up and replace original
+    let _ = std::fs::remove_file(&cover_path);
+
+    if output.status.success() {
+        let _ = std::fs::remove_file(&audio_path);
+        let _ = std::fs::rename(&tmp_path, &audio_path);
+    } else {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    Ok(())
+}
+
+/// Finds the downloaded audio file by title (yt-dlp may sanitize the filename).
+fn find_audio_file(output_dir: &str, title: &str, fmt: &str) -> Result<PathBuf, String> {
+    // Try exact match first
+    let exact = PathBuf::from(output_dir).join(format!("{}.{}", title, fmt));
+    if exact.exists() {
+        return Ok(exact);
+    }
+
+    // Scan directory for a file containing part of the title
+    if let Ok(entries) = std::fs::read_dir(output_dir) {
+        let title_lower = title.to_lowercase();
+        let ext = format!(".{}", fmt);
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.to_lowercase().ends_with(&ext) && name.to_lowercase().contains(&title_lower[..title_lower.len().min(20)]) {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    Err(format!("Audio file not found for '{}'", title))
 }
