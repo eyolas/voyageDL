@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicekid1/tauri-v2-schema/main/tauri.conf.schema.json",
+  "productName": "Voyage DL",
+  "version": "0.1.0",
+  "identifier": "com.voyagedl.app",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Voyage DL - Music Downloader",
+        "width": 900,
+        "height": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "focus": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis", "dmg"],
+    "externalBin": [
+      "binaries/yt-dlp",
+      "binaries/ffmpeg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "copyright": "2026 Voyage DL"
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

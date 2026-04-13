@@ -1,0 +1,49 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+            sidecars: "macos"
+          - platform: windows-latest
+            args: ""
+            sidecars: "windows"
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Download sidecars (yt-dlp + ffmpeg)
+        shell: bash
+        run: bash scripts/download-sidecars.sh ${{ matrix.sidecars }}
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Voyage DL ${{ github.ref_name }}"
+          releaseBody: "Télécharge le .msi (Windows) ou .dmg (macOS) ci-dessous."
+          releaseDraft: true
+          args: ${{ matrix.args }}

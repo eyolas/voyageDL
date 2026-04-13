@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/alert.tsx","./src/components/downloadprogress.tsx","./src/components/mainscreen.tsx","./src/components/settings.tsx","./src/components/setupscreen.tsx","./src/components/tracklist.tsx","./src/hooks/useconfig.ts"],"version":"5.9.3"}
