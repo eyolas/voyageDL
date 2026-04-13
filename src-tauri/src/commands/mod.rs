@@ -16,23 +16,28 @@ use serde::{Deserialize, Serialize};
 /// This structure contains all information needed to identify and download a single track.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackInfo {
-    /// Unique identifier for the track (e.g., YouTube video ID)
     pub id: String,
-
-    /// Title of the track
     pub title: String,
-
-    /// Artist name (uploader for YouTube, artist for Spotify)
     pub artist: String,
-
-    /// URL to the source (YouTube URL)
     pub url: String,
-
-    /// Thumbnail URL for the track
     pub thumbnail_url: String,
-
-    /// Duration in seconds
     pub duration_seconds: u32,
+
+    /// Album name (from Deezer)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
+
+    /// Album cover URL (from Deezer)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_cover_url: Option<String>,
+
+    /// Track number in the album (from Deezer)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<u32>,
+
+    /// Release year (from Deezer)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<String>,
 }
 
 /// Response structure for download operations.

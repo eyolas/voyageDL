@@ -55,11 +55,20 @@ struct DeezerTrack {
     #[serde(default)]
     duration: u32,
     artist: DeezerArtist,
+    #[serde(default)]
+    album: Option<DeezerAlbum>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DeezerArtist {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeezerAlbum {
+    title: String,
+    #[serde(default)]
+    cover_big: Option<String>,
 }
 
 /// Fetches all tracks from a Deezer playlist and searches for them on YouTube.
@@ -255,6 +264,10 @@ pub async fn fetch_deezer_playlist(
                             .unwrap_or("")
                             .to_string(),
                         duration_seconds: deezer_track.duration,
+                        album: deezer_track.album.as_ref().map(|a| a.title.clone()),
+                        album_cover_url: deezer_track.album.as_ref().and_then(|a| a.cover_big.clone()),
+                        track_number: Some((idx + 1) as u32),
+                        year: None,
                     };
 
                     cache.set_track(&search_query, &track_info);

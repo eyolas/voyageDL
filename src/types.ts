@@ -9,6 +9,10 @@ export interface TrackInfo {
   url: string;
   thumbnail_url: string;
   duration_seconds: number;
+  album?: string;
+  album_cover_url?: string;
+  track_number?: number;
+  year?: string;
 }
 
 export interface AppConfig {

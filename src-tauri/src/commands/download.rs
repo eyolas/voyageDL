@@ -136,7 +136,7 @@ pub async fn download_tracks(
             output_dir.replace("\\", "/")
         );
 
-        let args = vec![
+        let mut args = vec![
             "-x".to_string(),
             "--audio-format".to_string(),
             "mp3".to_string(),
@@ -144,8 +144,26 @@ pub async fn download_tracks(
             "0".to_string(),
             "-o".to_string(),
             output_template,
-            track.url.clone(),
         ];
+
+        // Build ffmpeg metadata args for ID3 tags
+        let mut meta_flags = Vec::new();
+        meta_flags.push(format!("-metadata \"artist={}\"", escape_metadata(&track.artist)));
+        meta_flags.push(format!("-metadata \"title={}\"", escape_metadata(&track.title)));
+        if let Some(ref album) = track.album {
+            meta_flags.push(format!("-metadata \"album={}\"", escape_metadata(album)));
+        }
+        if let Some(track_num) = track.track_number {
+            meta_flags.push(format!("-metadata \"track={}\"", track_num));
+        }
+        if let Some(ref year) = track.year {
+            meta_flags.push(format!("-metadata \"date={}\"", escape_metadata(year)));
+        }
+
+        args.push("--postprocessor-args".to_string());
+        args.push(format!("ffmpeg:{} -id3v2_version 3", meta_flags.join(" ")));
+
+        args.push(track.url.clone());
 
         // Run yt-dlp with cancellation support
         match run_cancellable(&yt_dlp_path, &args, &state).await {
@@ -317,4 +335,9 @@ fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
     if let Err(e) = app.emit("download-progress", &progress) {
         eprintln!("Failed to emit download-progress event: {}", e);
     }
+}
+
+/// Escapes special characters in metadata values for ffmpeg.
+fn escape_metadata(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }

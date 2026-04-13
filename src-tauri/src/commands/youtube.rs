@@ -68,36 +68,18 @@ fn parse_video_json(json_str: &str) -> Result<Vec<TrackInfo>, String> {
         serde_json::from_str(json_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
     let track = TrackInfo {
-        id: json
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string(),
-        title: json
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Untitled")
-            .to_string(),
-        artist: json
-            .get("uploader")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string(),
-        url: json
-            .get("webpage_url")
-            .and_then(|v| v.as_str())
+        id: json.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+        title: json.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled").to_string(),
+        artist: json.get("uploader").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
+        url: json.get("webpage_url").and_then(|v| v.as_str())
             .or_else(|| json.get("url").and_then(|v| v.as_str()))
-            .unwrap_or("")
-            .to_string(),
-        thumbnail_url: json
-            .get("thumbnail")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        duration_seconds: json
-            .get("duration")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32,
+            .unwrap_or("").to_string(),
+        thumbnail_url: json.get("thumbnail").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        duration_seconds: json.get("duration").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        album: json.get("album").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        album_cover_url: None,
+        track_number: None,
+        year: json.get("upload_date").and_then(|v| v.as_str()).map(|s| s[..4].to_string()),
     };
 
     Ok(vec![track])
@@ -128,26 +110,17 @@ fn parse_playlist_json(json_str: &str) -> Result<Vec<TrackInfo>, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("Untitled")
                 .to_string(),
-            artist: json
-                .get("uploader")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown")
-                .to_string(),
+            artist: json.get("uploader").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
             url: format!(
                 "https://www.youtube.com/watch?v={}",
-                json.get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
+                json.get("id").and_then(|v| v.as_str()).unwrap_or("unknown")
             ),
-            thumbnail_url: json
-                .get("thumbnail")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            duration_seconds: json
-                .get("duration")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+            thumbnail_url: json.get("thumbnail").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            duration_seconds: json.get("duration").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            album: None,
+            album_cover_url: None,
+            track_number: None,
+            year: None,
         };
 
         tracks.push(track);
