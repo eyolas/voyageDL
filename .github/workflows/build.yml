@@ -24,18 +24,42 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
 
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache sidecars
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: sidecars-${{ matrix.sidecars }}-${{ hashFiles('scripts/download-sidecars.sh') }}
+
       - name: Install frontend dependencies
         run: npm install
 
       - name: Download sidecars (yt-dlp + ffmpeg)
         shell: bash
-        run: bash scripts/download-sidecars.sh ${{ matrix.sidecars }}
+        run: |
+          if [ -d "src-tauri/binaries" ] && [ "$(ls -A src-tauri/binaries 2>/dev/null)" ]; then
+            echo "Sidecars already cached, skipping download"
+            ls -lh src-tauri/binaries/
+          else
+            bash scripts/download-sidecars.sh ${{ matrix.sidecars }}
+          fi
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -44,6 +68,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Voyage DL ${{ github.ref_name }}"
-          releaseBody: "Télécharge le .msi (Windows) ou .dmg (macOS) ci-dessous."
+          releaseBody: "Download the .msi (Windows) or .dmg (macOS) below."
           releaseDraft: true
           args: ${{ matrix.args }}
