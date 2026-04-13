@@ -125,6 +125,7 @@ pub async fn fetch_deezer_playlist(
     dev_log!("First page: {} tracks loaded", deezer_tracks.len());
 
     // Handle pagination
+    #[allow(unused_variables, unused_mut, unused_assignments)]
     let mut page_num = 1;
     while let Some(ref url) = next_url {
         page_num += 1;
@@ -279,6 +280,7 @@ pub async fn fetch_deezer_playlist(
                 dev_log!("[{}/{}] YouTube JSON parsing error", idx + 1, total);
             }
         } else {
+            #[allow(unused_variables)]
             let stderr = String::from_utf8_lossy(&output.stderr);
             dev_log!("[{}/{}] yt-dlp ERROR: {}", idx + 1, total, stderr);
         }
