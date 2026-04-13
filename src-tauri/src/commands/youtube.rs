@@ -2,24 +2,25 @@
 ///
 /// Handles extracting information from YouTube videos and playlists using yt-dlp.
 
+use crate::commands::cache::FetchCache;
 use crate::commands::TrackInfo;
 use crate::utils::sidecar::{find_sidecar, run_sidecar_command};
 use serde_json;
-use tauri::command;
+use tauri::{command, State};
 use url::Url;
 
 /// Fetches information about a YouTube video or playlist.
-///
-/// Automatically detects whether the provided URL is a single video or a playlist,
-/// and fetches the appropriate metadata using yt-dlp.
-///
-/// # Arguments
-/// * `url` - The YouTube URL (video or playlist)
-///
-/// # Returns
-/// Returns a vector of TrackInfo objects, one per video.
+/// Returns cached results if the URL has been fetched before.
 #[command]
-pub async fn fetch_youtube_info(url: String) -> Result<Vec<TrackInfo>, String> {
+pub async fn fetch_youtube_info(
+    cache: State<'_, FetchCache>,
+    url: String,
+) -> Result<Vec<TrackInfo>, String> {
+    // Check cache first
+    if let Some(cached) = cache.get(&url) {
+        return Ok(cached);
+    }
+
     // Validate the URL
     Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
 
@@ -54,6 +55,9 @@ pub async fn fetch_youtube_info(url: String) -> Result<Vec<TrackInfo>, String> {
     } else {
         parse_video_json(&output)?
     };
+
+    // Store in cache
+    cache.set(url, tracks.clone());
 
     Ok(tracks)
 }

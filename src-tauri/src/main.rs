@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use voyage_dl::commands::{
-    config::*, youtube::*, deezer::*, download::*
+    cache::FetchCache, config::*, youtube::*, deezer::*, download::*
 };
 
 fn main() {
@@ -9,6 +9,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(DownloadState::new())
+        .manage(FetchCache::new())
         .invoke_handler(tauri::generate_handler![
             // Config commands
             get_config,

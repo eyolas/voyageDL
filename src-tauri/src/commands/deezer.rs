@@ -3,11 +3,12 @@
 /// Handles extracting track information from Deezer playlists via the public API
 /// and searching for those tracks on YouTube.
 
+use crate::commands::cache::FetchCache;
 use crate::commands::TrackInfo;
 use crate::utils::sidecar::{find_sidecar, run_sidecar_command};
 use reqwest::Client;
 use serde::Deserialize;
-use tauri::command;
+use tauri::{command, State};
 
 #[derive(Debug, Deserialize)]
 struct DeezerPlaylistResponse {
@@ -48,7 +49,15 @@ struct DeezerArtist {
 /// 3. For each track, searches YouTube and retrieves the video URL
 /// 4. Returns a list of TrackInfo objects ready for download
 #[command]
-pub async fn fetch_deezer_playlist(url: String) -> Result<Vec<TrackInfo>, String> {
+pub async fn fetch_deezer_playlist(
+    cache: State<'_, FetchCache>,
+    url: String,
+) -> Result<Vec<TrackInfo>, String> {
+    // Check cache first
+    if let Some(cached) = cache.get(&url) {
+        return Ok(cached);
+    }
+
     let client = Client::new();
 
     let playlist_id = extract_playlist_id(&url)?;
@@ -149,6 +158,9 @@ pub async fn fetch_deezer_playlist(url: String) -> Result<Vec<TrackInfo>, String
             "No tracks found or could not search YouTube for any of them".to_string(),
         );
     }
+
+    // Store in cache
+    cache.set(url, tracks.clone());
 
     Ok(tracks)
 }
