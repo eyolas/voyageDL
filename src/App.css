@@ -395,6 +395,16 @@
   color: var(--color-text-secondary);
 }
 
+.analyze-loading-url {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
 .analyze-loading-bar {
   width: 100%;
   height: 3px;

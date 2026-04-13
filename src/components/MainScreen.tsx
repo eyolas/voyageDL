@@ -1,6 +1,6 @@
 /**
  * MainScreen - Main interface for URL analysis and track selection.
- * Supports multiple analyses, pause, and cancel.
+ * Supports multiple concurrent analyses, each with its own progress/pause/cancel.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -20,6 +20,14 @@ interface MainScreenProps {
 
 type URLType = 'youtube' | 'deezer';
 
+interface ActiveAnalysis {
+  id: string;
+  url: string;
+  urlType: URLType;
+  progress: AnalyzeProgressEvent | null;
+  paused: boolean;
+}
+
 interface AnalyzeResult {
   id: string;
   url: string;
@@ -27,7 +35,7 @@ interface AnalyzeResult {
   tracks: TrackInfo[];
 }
 
-let resultCounter = 0;
+let idCounter = 0;
 
 export function MainScreen({
   config,
@@ -36,23 +44,27 @@ export function MainScreen({
   onAddToQueue,
 }: MainScreenProps) {
   const [urlInput, setUrlInput] = useState('');
-  const [activeCount, setActiveCount] = useState(0);
-  const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgressEvent | null>(null);
+  const [activeAnalyses, setActiveAnalyses] = useState<ActiveAnalysis[]>([]);
   const [results, setResults] = useState<AnalyzeResult[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  // Track which analysis ID is the latest Deezer (receives progress events)
+  const latestDeezerIdRef = useRef<string | null>(null);
 
-  // Listen to analyze-progress events
+  // Listen to analyze-progress events - route to the latest Deezer analysis
   useEffect(() => {
     const setup = async () => {
       unlistenRef.current = await listen<AnalyzeProgressEvent>('analyze-progress', (event) => {
-        setAnalyzeProgress(event.payload);
-        if (event.payload.status === 'paused') {
-          setPaused(true);
-        } else {
-          setPaused(false);
-        }
+        const targetId = latestDeezerIdRef.current;
+        if (!targetId) return;
+
+        setActiveAnalyses((prev) =>
+          prev.map((a) =>
+            a.id === targetId
+              ? { ...a, progress: event.payload, paused: event.payload.status === 'paused' }
+              : a
+          )
+        );
       });
     };
     setup();
@@ -74,7 +86,7 @@ export function MainScreen({
     return null;
   };
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = () => {
     const detected = detectURLType(urlInput);
     if (!detected) {
       setError('Veuillez entrer une URL YouTube ou Deezer valide');
@@ -82,24 +94,33 @@ export function MainScreen({
     }
 
     setError(null);
-    setPaused(false);
-    setAnalyzeProgress(null);
-    setActiveCount((c) => c + 1);
-
+    idCounter += 1;
+    const analysisId = `analysis-${idCounter}`;
     const analyzedUrl = urlInput;
-    const analyzedType = detected.type;
+
+    const newAnalysis: ActiveAnalysis = {
+      id: analysisId,
+      url: analyzedUrl,
+      urlType: detected.type,
+      progress: null,
+      paused: false,
+    };
+
+    setActiveAnalyses((prev) => [...prev, newAnalysis]);
     setUrlInput('');
 
-    // Run analysis in background - don't block the UI
+    if (detected.type === 'deezer') {
+      latestDeezerIdRef.current = analysisId;
+    }
+
     invoke<TrackInfo[]>(
-      analyzedType === 'youtube' ? 'fetch_youtube_info' : 'fetch_deezer_playlist',
+      detected.type === 'youtube' ? 'fetch_youtube_info' : 'fetch_deezer_playlist',
       { url: detected.url },
     )
       .then((tracks) => {
         if (tracks.length > 0) {
-          resultCounter += 1;
           setResults((prev) => [
-            { id: `result-${resultCounter}`, url: analyzedUrl, urlType: analyzedType, tracks },
+            { id: analysisId, url: analyzedUrl, urlType: detected.type, tracks },
             ...prev,
           ]);
         }
@@ -109,9 +130,10 @@ export function MainScreen({
         setError(errorMsg);
       })
       .finally(() => {
-        setActiveCount((c) => c - 1);
-        setPaused(false);
-        setAnalyzeProgress(null);
+        setActiveAnalyses((prev) => prev.filter((a) => a.id !== analysisId));
+        if (latestDeezerIdRef.current === analysisId) {
+          latestDeezerIdRef.current = null;
+        }
       });
   };
 
@@ -131,8 +153,7 @@ export function MainScreen({
 
   const handleTogglePause = async () => {
     try {
-      const isPaused = await invoke<boolean>('toggle_pause_analyze');
-      setPaused(isPaused);
+      await invoke<boolean>('toggle_pause_analyze');
     } catch (err) {
       console.error('Failed to toggle pause:', err);
     }
@@ -221,11 +242,11 @@ export function MainScreen({
           </div>
         </div>
 
-        {/* Active analysis */}
-        {activeCount > 0 && (
-          <div className="analyze-loading">
+        {/* Active analyses - each one gets its own card */}
+        {activeAnalyses.map((analysis) => (
+          <div key={analysis.id} className="analyze-loading">
             <div className="analyze-loading-content">
-              {paused ? (
+              {analysis.paused ? (
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--color-warning)" stroke="none">
                   <rect x="6" y="4" width="4" height="16" rx="1" />
                   <rect x="14" y="4" width="4" height="16" rx="1" />
@@ -240,61 +261,65 @@ export function MainScreen({
                 </div>
               )}
               <div className="analyze-loading-text">
-                {analyzeProgress ? (
+                {analysis.progress ? (
                   <>
                     <span className="analyze-loading-title">
-                      {paused ? 'En pause' : 'Recherche YouTube'} {analyzeProgress.current}/{analyzeProgress.total}
+                      {analysis.paused ? 'En pause' : 'Recherche YouTube'} {analysis.progress.current}/{analysis.progress.total}
                     </span>
                     <span className="analyze-loading-detail">
-                      {analyzeProgress.artist} — {analyzeProgress.track_title}
+                      {analysis.progress.artist} — {analysis.progress.track_title}
                     </span>
                   </>
                 ) : (
                   <>
-                    <span className="analyze-loading-title">Analyse en cours...</span>
-                    <span className="analyze-loading-detail">
-                      Recuperation des informations
+                    <span className="analyze-loading-title">
+                      Analyse {analysis.urlType === 'deezer' ? 'Deezer' : 'YouTube'}...
+                    </span>
+                    <span className="analyze-loading-detail analyze-loading-url">
+                      {analysis.url}
                     </span>
                   </>
                 )}
               </div>
             </div>
-            <div className="analyze-loading-actions">
-              {analyzeProgress && (
-                <button className="analyze-action-btn pause" onClick={handleTogglePause} title={paused ? 'Reprendre' : 'Pause'}>
-                  {paused ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                      <polygon points="5 3 19 12 5 21 5 3" />
-                    </svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                      <rect x="6" y="4" width="4" height="16" rx="1" />
-                      <rect x="14" y="4" width="4" height="16" rx="1" />
-                    </svg>
-                  )}
-                  {paused ? 'Reprendre' : 'Pause'}
+            {analysis.urlType === 'deezer' && (
+              <div className="analyze-loading-actions">
+                {analysis.progress && (
+                  <button className="analyze-action-btn pause" onClick={handleTogglePause} title={analysis.paused ? 'Reprendre' : 'Pause'}>
+                    {analysis.paused ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                        <rect x="6" y="4" width="4" height="16" rx="1" />
+                        <rect x="14" y="4" width="4" height="16" rx="1" />
+                      </svg>
+                    )}
+                    {analysis.paused ? 'Reprendre' : 'Pause'}
+                  </button>
+                )}
+                <button className="analyze-action-btn cancel" onClick={handleCancel} title="Annuler">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                  Annuler
                 </button>
-              )}
-              <button className="analyze-action-btn cancel" onClick={handleCancel} title="Annuler">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-                Annuler
-              </button>
-            </div>
+              </div>
+            )}
             <div className="analyze-loading-bar">
               <div
                 className="analyze-loading-bar-fill"
-                style={analyzeProgress ? {
-                  animation: paused ? 'none' : undefined,
-                  width: `${(analyzeProgress.current / analyzeProgress.total) * 100}%`,
+                style={analysis.progress ? {
+                  animation: analysis.paused ? 'none' : undefined,
+                  width: `${(analysis.progress.current / analysis.progress.total) * 100}%`,
                   transition: 'width 0.3s ease-out',
                 } : undefined}
               />
             </div>
           </div>
-        )}
+        ))}
 
         {/* Results list */}
         {results.map((result) => (
@@ -317,7 +342,7 @@ export function MainScreen({
         ))}
 
         {/* Empty state */}
-        {activeCount === 0 && results.length === 0 && (
+        {activeAnalyses.length === 0 && results.length === 0 && (
           <div className="main-empty-state">
             <div className="main-empty-state-inner">
               <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
