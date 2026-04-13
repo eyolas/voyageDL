@@ -10,6 +10,14 @@ use reqwest::Client;
 use serde::Deserialize;
 use tauri::{command, State};
 
+/// Dev-only logging macro. Compiles to nothing in release builds.
+macro_rules! dev_log {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        eprintln!("[deezer] {}", format!($($arg)*));
+    };
+}
+
 #[derive(Debug, Deserialize)]
 struct DeezerPlaylistResponse {
     tracks: DeezerTracksData,
@@ -29,7 +37,7 @@ struct DeezerTracksPage {
 
 #[derive(Debug, Deserialize)]
 struct DeezerTrack {
-    id: u64,
+    _id: u64,
     title: String,
     #[serde(default)]
     duration: u32,
@@ -55,15 +63,20 @@ pub async fn fetch_deezer_playlist(
 ) -> Result<Vec<TrackInfo>, String> {
     // Check cache first
     if let Some(cached) = cache.get(&url) {
+        dev_log!("Cache hit pour {} ({} pistes)", url, cached.len());
         return Ok(cached);
     }
+    dev_log!("Cache miss, demarrage du fetch pour {}", url);
 
     let client = Client::new();
 
     let playlist_id = extract_playlist_id(&url)?;
+    dev_log!("Extracted playlist ID: {}", playlist_id);
 
     // Fetch first page (embedded in playlist response)
     let playlist_url = format!("https://api.deezer.com/playlist/{}", playlist_id);
+    dev_log!("Calling Deezer API: {}", playlist_url);
+
     let response = client
         .get(&playlist_url)
         .send()
@@ -84,9 +97,14 @@ pub async fn fetch_deezer_playlist(
 
     let mut deezer_tracks = playlist.tracks.data;
     let mut next_url = playlist.tracks.next;
+    dev_log!("First page: {} tracks loaded", deezer_tracks.len());
 
     // Handle pagination
+    let mut page_num = 1;
     while let Some(ref url) = next_url {
+        page_num += 1;
+        dev_log!("Pagination: loading page {}...", page_num);
+
         let response = client
             .get(url)
             .send()
@@ -98,6 +116,7 @@ pub async fn fetch_deezer_playlist(
             .await
             .map_err(|e| format!("Failed to parse tracks page: {}", e))?;
 
+        dev_log!("Page {}: {} additional tracks", page_num, page.data.len());
         deezer_tracks.extend(page.data);
         next_url = page.next;
     }
@@ -105,6 +124,8 @@ pub async fn fetch_deezer_playlist(
     if deezer_tracks.is_empty() {
         return Err("Playlist is empty".to_string());
     }
+
+    dev_log!("Deezer total: {} tracks. Starting YouTube search...", deezer_tracks.len());
 
     // Find yt-dlp for YouTube search
     let yt_dlp_path = find_sidecar("yt-dlp").map_err(|e| {
@@ -115,11 +136,17 @@ pub async fn fetch_deezer_playlist(
     })?;
 
     let mut tracks = Vec::new();
+    let total = deezer_tracks.len();
 
-    for deezer_track in deezer_tracks {
+    for (idx, deezer_track) in deezer_tracks.iter().enumerate() {
         let search_query = format!(
             "ytsearch1:{} {}",
             deezer_track.artist.name, deezer_track.title
+        );
+
+        dev_log!(
+            "[{}/{}] YT search: {} - {}",
+            idx + 1, total, deezer_track.artist.name, deezer_track.title
         );
 
         let yt_args = vec!["--dump-json".to_string(), search_query];
@@ -128,10 +155,11 @@ pub async fn fetch_deezer_playlist(
             Ok(yt_json_str) => {
                 if let Ok(yt_json) = serde_json::from_str::<serde_json::Value>(&yt_json_str) {
                     if let Some(yt_id) = yt_json.get("id").and_then(|v| v.as_str()) {
+                        dev_log!("[{}/{}] Found: https://youtube.com/watch?v={}", idx + 1, total, yt_id);
                         let track_info = TrackInfo {
                             id: yt_id.to_string(),
-                            title: deezer_track.title,
-                            artist: deezer_track.artist.name,
+                            title: deezer_track.title.clone(),
+                            artist: deezer_track.artist.name.clone(),
                             url: format!("https://www.youtube.com/watch?v={}", yt_id),
                             thumbnail_url: yt_json
                                 .get("thumbnail")
@@ -141,17 +169,20 @@ pub async fn fetch_deezer_playlist(
                             duration_seconds: deezer_track.duration,
                         };
                         tracks.push(track_info);
+                    } else {
+                        dev_log!("[{}/{}] No YouTube ID in response", idx + 1, total);
                     }
+                } else {
+                    dev_log!("[{}/{}] YouTube JSON parsing error", idx + 1, total);
                 }
             }
             Err(e) => {
-                eprintln!(
-                    "Failed to search for track '{}': {}",
-                    deezer_track.title, e
-                );
+                dev_log!("[{}/{}] ERREUR recherche: {}", idx + 1, total, e);
             }
         }
     }
+
+    dev_log!("Search done: {}/{} tracks found on YouTube", tracks.len(), total);
 
     if tracks.is_empty() {
         return Err(
@@ -161,6 +192,7 @@ pub async fn fetch_deezer_playlist(
 
     // Store in cache
     cache.set(url, tracks.clone());
+    dev_log!("Resultats sauvegardes dans le cache");
 
     Ok(tracks)
 }
