@@ -36,7 +36,7 @@ export function MainScreen({
   onAddToQueue,
 }: MainScreenProps) {
   const [urlInput, setUrlInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [activeCount, setActiveCount] = useState(0);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgressEvent | null>(null);
@@ -82,40 +82,41 @@ export function MainScreen({
     }
 
     setError(null);
-    setLoading(true);
     setPaused(false);
     setAnalyzeProgress(null);
+    setActiveCount((c) => c + 1);
 
     const analyzedUrl = urlInput;
+    const analyzedType = detected.type;
     setUrlInput('');
 
-    try {
-      let tracks: TrackInfo[];
-      if (detected.type === 'youtube') {
-        tracks = await invoke<TrackInfo[]>('fetch_youtube_info', { url: detected.url });
-      } else {
-        tracks = await invoke<TrackInfo[]>('fetch_deezer_playlist', { url: detected.url });
-      }
-
-      if (tracks.length > 0) {
-        resultCounter += 1;
-        setResults((prev) => [
-          { id: `result-${resultCounter}`, url: analyzedUrl, urlType: detected.type, tracks },
-          ...prev,
-        ]);
-      }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(errorMsg);
-    } finally {
-      setLoading(false);
-      setPaused(false);
-      setAnalyzeProgress(null);
-    }
+    // Run analysis in background - don't block the UI
+    invoke<TrackInfo[]>(
+      analyzedType === 'youtube' ? 'fetch_youtube_info' : 'fetch_deezer_playlist',
+      { url: detected.url },
+    )
+      .then((tracks) => {
+        if (tracks.length > 0) {
+          resultCounter += 1;
+          setResults((prev) => [
+            { id: `result-${resultCounter}`, url: analyzedUrl, urlType: analyzedType, tracks },
+            ...prev,
+          ]);
+        }
+      })
+      .catch((err) => {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(errorMsg);
+      })
+      .finally(() => {
+        setActiveCount((c) => c - 1);
+        setPaused(false);
+        setAnalyzeProgress(null);
+      });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !loading && urlInput.trim()) {
+    if (e.key === 'Enter' && urlInput.trim()) {
       handleAnalyze();
     }
   };
@@ -205,35 +206,23 @@ export function MainScreen({
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              disabled={loading}
             />
             <button
-              className={`analyze-button ${loading ? 'loading' : ''}`}
+              className="analyze-button"
               onClick={handleAnalyze}
-              disabled={loading || !urlInput.trim()}
+              disabled={!urlInput.trim()}
             >
-              {loading ? (
-                <>
-                  <svg className="spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                  </svg>
-                  Analyse...
-                </>
-              ) : (
-                <>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  </svg>
-                  Analyser
-                </>
-              )}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              Analyser
             </button>
           </div>
         </div>
 
         {/* Active analysis */}
-        {loading && (
+        {activeCount > 0 && (
           <div className="analyze-loading">
             <div className="analyze-loading-content">
               {paused ? (
@@ -328,7 +317,7 @@ export function MainScreen({
         ))}
 
         {/* Empty state */}
-        {!loading && results.length === 0 && (
+        {activeCount === 0 && results.length === 0 && (
           <div className="main-empty-state">
             <div className="main-empty-state-inner">
               <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
