@@ -15,10 +15,13 @@ export interface DownloadJob {
 }
 
 interface QueuedTrack {
-  id: string;
+  queueId: string;
+  trackId: string;
   title: string;
   status: 'pending' | 'downloading' | 'completed' | 'error' | 'cancelled';
 }
+
+let queueItemCounter = 0;
 
 interface DownloadQueueProps {
   jobs: DownloadJob[];
@@ -44,31 +47,29 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
         const { current, total, track_title, track_id, status } = event.payload;
         setProgress({ current, total });
 
+        const updateStatus = (newStatus: QueuedTrack['status']) => {
+          setQueuedTracks((prev) => {
+            // Only update the FIRST matching track with this trackId that doesn't already have a final status
+            let found = false;
+            return prev.map((t) => {
+              if (!found && t.trackId === track_id && (t.status === 'pending' || t.status === 'downloading')) {
+                found = true;
+                return { ...t, status: newStatus };
+              }
+              return t;
+            });
+          });
+        };
+
         if (status === 'downloading') {
           setCurrentTrack(track_title);
-          setQueuedTracks((prev) =>
-            prev.map((t) =>
-              t.id === track_id ? { ...t, status: 'downloading' } : t
-            )
-          );
+          updateStatus('downloading');
         } else if (status === 'completed') {
-          setQueuedTracks((prev) =>
-            prev.map((t) =>
-              t.id === track_id ? { ...t, status: 'completed' } : t
-            )
-          );
+          updateStatus('completed');
         } else if (status === 'error') {
-          setQueuedTracks((prev) =>
-            prev.map((t) =>
-              t.id === track_id ? { ...t, status: 'error' } : t
-            )
-          );
+          updateStatus('error');
         } else if (status === 'cancelled') {
-          setQueuedTracks((prev) =>
-            prev.map((t) =>
-              t.id === track_id ? { ...t, status: 'cancelled' } : t
-            )
-          );
+          updateStatus('cancelled');
         }
       });
     };
@@ -90,11 +91,15 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
         setIsProcessing(true);
         setIsCancelling(false);
 
-        const newTracks: QueuedTrack[] = job.tracks.map((t) => ({
-          id: t.id,
-          title: t.title,
-          status: 'pending' as const,
-        }));
+        const newTracks: QueuedTrack[] = job.tracks.map((t) => {
+          queueItemCounter += 1;
+          return {
+            queueId: `qi-${queueItemCounter}`,
+            trackId: t.id,
+            title: t.title,
+            status: 'pending' as const,
+          };
+        });
         setQueuedTracks((prev) => [...prev, ...newTracks]);
         setProgress((prev) => ({ current: prev.current, total: prev.total + job.tracks.length }));
 
@@ -105,20 +110,20 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
           });
 
           // Ensure remaining pending tracks get a final status
-          const jobIds = new Set(job.tracks.map((t) => t.id));
+          const jobTrackIds = new Set(job.tracks.map((t) => t.id));
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              jobIds.has(t.id) && t.status === 'pending'
+              jobTrackIds.has(t.trackId) && t.status === 'pending'
                 ? { ...t, status: result.failed > 0 ? 'error' : 'completed' }
                 : t
             )
           );
         } catch (error) {
           console.error('Download job failed:', error);
-          const jobIds = new Set(job.tracks.map((t) => t.id));
+          const jobTrackIds = new Set(job.tracks.map((t) => t.id));
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              jobIds.has(t.id) && (t.status === 'pending' || t.status === 'downloading')
+              jobTrackIds.has(t.trackId) && (t.status === 'pending' || t.status === 'downloading')
                 ? { ...t, status: 'error' }
                 : t
             )
@@ -168,13 +173,11 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
     }
   };
 
-  const handleSkipTrack = async (trackId: string) => {
-    // Optimistic UI update
+  const handleSkipTrack = async (queueId: string, trackId: string) => {
+    // Optimistic UI update - only cancel this specific queue item
     setQueuedTracks((prev) =>
       prev.map((t) =>
-        t.id === trackId && (t.status === 'pending' || t.status === 'downloading')
-          ? { ...t, status: 'cancelled' }
-          : t
+        t.queueId === queueId ? { ...t, status: 'cancelled' } : t
       )
     );
     try {
@@ -275,7 +278,7 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
         <div className="download-queue-body">
           <div className="download-queue-tracks">
             {queuedTracks.map((track) => (
-              <div key={track.id} className={`download-queue-track ${track.status}`}>
+              <div key={track.queueId} className={`download-queue-track ${track.status}`}>
                 <span className="download-queue-track-title">{track.title}</span>
                 {track.status === 'downloading' && (
                   <span className="download-queue-track-badge">En cours</span>
@@ -289,7 +292,7 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
                 {(track.status === 'pending' || track.status === 'downloading') && (
                   <button
                     className="download-queue-track-cancel"
-                    onClick={() => handleSkipTrack(track.id)}
+                    onClick={() => handleSkipTrack(track.queueId, track.trackId)}
                     title="Annuler cette piste"
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
