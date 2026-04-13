@@ -1,6 +1,6 @@
 /**
  * DownloadQueue - Persistent download panel shown at the bottom of the screen.
- * Tracks all downloads independently from URL analysis.
+ * Supports cancellation of all downloads or individual tracks.
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -15,8 +15,9 @@ export interface DownloadJob {
 }
 
 interface QueuedTrack {
+  id: string;
   title: string;
-  status: 'pending' | 'downloading' | 'completed' | 'error';
+  status: 'pending' | 'downloading' | 'completed' | 'error' | 'cancelled';
 }
 
 interface DownloadQueueProps {
@@ -26,9 +27,10 @@ interface DownloadQueueProps {
 
 export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
   const [queuedTracks, setQueuedTracks] = useState<QueuedTrack[]>([]);
-  const [_currentTrack, setCurrentTrack] = useState<string | null>(null);
+  const [currentTrack, setCurrentTrack] = useState<string | null>(null);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const processingRef = useRef(false);
   const processedJobsRef = useRef<Set<string>>(new Set());
@@ -39,26 +41,32 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
 
     const setup = async () => {
       unlisten = await listen<DownloadProgressEvent>('download-progress', (event) => {
-        const { current, total, track_title, status } = event.payload;
+        const { current, total, track_title, track_id, status } = event.payload;
         setProgress({ current, total });
 
         if (status === 'downloading') {
           setCurrentTrack(track_title);
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              t.title === track_title ? { ...t, status: 'downloading' } : t
+              t.id === track_id ? { ...t, status: 'downloading' } : t
             )
           );
         } else if (status === 'completed') {
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              t.title === track_title ? { ...t, status: 'completed' } : t
+              t.id === track_id ? { ...t, status: 'completed' } : t
             )
           );
         } else if (status === 'error') {
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              t.title === track_title ? { ...t, status: 'error' } : t
+              t.id === track_id ? { ...t, status: 'error' } : t
+            )
+          );
+        } else if (status === 'cancelled') {
+          setQueuedTracks((prev) =>
+            prev.map((t) =>
+              t.id === track_id ? { ...t, status: 'cancelled' } : t
             )
           );
         }
@@ -80,9 +88,10 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
         processedJobsRef.current.add(job.id);
         processingRef.current = true;
         setIsProcessing(true);
+        setIsCancelling(false);
 
-        // Add tracks to queue display
         const newTracks: QueuedTrack[] = job.tracks.map((t) => ({
+          id: t.id,
           title: t.title,
           status: 'pending' as const,
         }));
@@ -95,22 +104,21 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
             outputDir: job.outputDir,
           });
 
-          // Ensure all tracks from this job have a final status
-          const jobTitles = new Set(job.tracks.map((t) => t.title));
+          // Ensure remaining pending tracks get a final status
+          const jobIds = new Set(job.tracks.map((t) => t.id));
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              jobTitles.has(t.title) && t.status === 'pending'
+              jobIds.has(t.id) && t.status === 'pending'
                 ? { ...t, status: result.failed > 0 ? 'error' : 'completed' }
                 : t
             )
           );
         } catch (error) {
           console.error('Download job failed:', error);
-          // Mark all pending tracks from this job as error
-          const jobTitles = new Set(job.tracks.map((t) => t.title));
+          const jobIds = new Set(job.tracks.map((t) => t.id));
           setQueuedTracks((prev) =>
             prev.map((t) =>
-              jobTitles.has(t.title) && (t.status === 'pending' || t.status === 'downloading')
+              jobIds.has(t.id) && (t.status === 'pending' || t.status === 'downloading')
                 ? { ...t, status: 'error' }
                 : t
             )
@@ -123,6 +131,7 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
 
       processingRef.current = false;
       setIsProcessing(false);
+      setIsCancelling(false);
     };
 
     processJobs();
@@ -130,15 +139,79 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
 
   const completedCount = queuedTracks.filter((t) => t.status === 'completed').length;
   const errorCount = queuedTracks.filter((t) => t.status === 'error').length;
+  const cancelledCount = queuedTracks.filter((t) => t.status === 'cancelled').length;
   const totalCount = queuedTracks.length;
 
   if (totalCount === 0) return null;
 
   const handleClear = () => {
-    if (isProcessing) return;
     setQueuedTracks([]);
     setProgress({ current: 0, total: 0 });
     processedJobsRef.current.clear();
+  };
+
+  const handleCancelAll = async () => {
+    if (!isProcessing || isCancelling) return;
+    setIsCancelling(true);
+    try {
+      await invoke('cancel_downloads');
+      setQueuedTracks((prev) =>
+        prev.map((t) =>
+          t.status === 'pending' || t.status === 'downloading'
+            ? { ...t, status: 'cancelled' }
+            : t
+        )
+      );
+    } catch (error) {
+      console.error('Failed to cancel downloads:', error);
+      setIsCancelling(false);
+    }
+  };
+
+  const handleSkipTrack = async (trackId: string) => {
+    // Optimistic UI update
+    setQueuedTracks((prev) =>
+      prev.map((t) =>
+        t.id === trackId && (t.status === 'pending' || t.status === 'downloading')
+          ? { ...t, status: 'cancelled' }
+          : t
+      )
+    );
+    try {
+      await invoke('skip_track', { trackId });
+    } catch (error) {
+      console.error('Failed to skip track:', error);
+    }
+  };
+
+  const canClear = !isProcessing || queuedTracks.every((t) => t.status !== 'downloading' && t.status !== 'pending');
+
+  const headerSummary = () => {
+    if (!isProcessing) {
+      const parts: string[] = [];
+      if (completedCount > 0) parts.push(`${completedCount} telecharge${completedCount > 1 ? 's' : ''}`);
+      if (errorCount > 0) parts.push(`${errorCount} en erreur`);
+      if (cancelledCount > 0) parts.push(`${cancelledCount} annule${cancelledCount > 1 ? 's' : ''}`);
+
+      const icon = cancelledCount > 0 && completedCount === 0
+        ? <svg className="dq-header-svg cancelled" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+        : errorCount > 0
+          ? <svg className="dq-header-svg warning" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          : <svg className="dq-header-svg success" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+
+      const label = cancelledCount > 0 && completedCount === 0
+        ? 'Telechargement annule'
+        : 'Termine';
+
+      return (
+        <>
+          {icon}
+          <span>{label}</span>
+          {parts.length > 0 && <span className="dq-header-detail">({parts.join(', ')})</span>}
+        </>
+      );
+    }
+    return null;
   };
 
   return (
@@ -147,48 +220,87 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
         <div className="download-queue-title">
           {isProcessing ? (
             <>
-              <span className="download-queue-spinner">⚙️</span>
-              Telechargement {progress.current}/{progress.total}
+              <div className="equalizer" style={{ height: '16px' }}>
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+              </div>
+              {isCancelling ? (
+                <span>Annulation en cours...</span>
+              ) : (
+                <span>
+                  Telechargement {progress.current}/{progress.total}
+                  {currentTrack && (
+                    <span className="dq-current-track"> — {currentTrack}</span>
+                  )}
+                </span>
+              )}
             </>
           ) : (
-            <>
-              <span>{errorCount > 0 ? '⚠️' : '✅'}</span>
-              {completedCount} / {totalCount} termine{completedCount > 1 ? 's' : ''}
-              {errorCount > 0 && ` (${errorCount} erreur${errorCount > 1 ? 's' : ''})`}
-            </>
+            headerSummary()
           )}
         </div>
         <div className="download-queue-actions">
-          {!isProcessing && (
+          {isProcessing && !isCancelling && (
+            <button
+              className="download-queue-cancel"
+              onClick={(e) => { e.stopPropagation(); handleCancelAll(); }}
+              title="Tout annuler"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+              </svg>
+              Tout annuler
+            </button>
+          )}
+          {canClear && totalCount > 0 && (
             <button className="download-queue-clear" onClick={(e) => { e.stopPropagation(); handleClear(); }}>
               Effacer
             </button>
           )}
-          <span className={`download-queue-toggle ${collapsed ? '' : 'expanded'}`}>▼</span>
+          <span className={`download-queue-toggle ${collapsed ? '' : 'expanded'}`}>&#9660;</span>
         </div>
       </div>
 
+      {isProcessing && (
+        <div className="download-queue-progress-bar">
+          <div
+            className="download-queue-progress-fill"
+            style={{ width: progress.total > 0 ? `${(progress.current / progress.total) * 100}%` : '0%' }}
+          />
+        </div>
+      )}
+
       {!collapsed && (
         <div className="download-queue-body">
-          {isProcessing && (
-            <div className="download-queue-progress-bar">
-              <div
-                className="download-queue-progress-fill"
-                style={{ width: progress.total > 0 ? `${(progress.current / progress.total) * 100}%` : '0%' }}
-              />
-            </div>
-          )}
-
           <div className="download-queue-tracks">
-            {queuedTracks.map((track, idx) => (
-              <div key={idx} className={`download-queue-track ${track.status}`}>
-                <span className="download-queue-track-icon">
-                  {track.status === 'pending' && '⏳'}
-                  {track.status === 'downloading' && '⚙️'}
-                  {track.status === 'completed' && '✓'}
-                  {track.status === 'error' && '✗'}
-                </span>
+            {queuedTracks.map((track) => (
+              <div key={track.id} className={`download-queue-track ${track.status}`}>
                 <span className="download-queue-track-title">{track.title}</span>
+                {track.status === 'downloading' && (
+                  <span className="download-queue-track-badge">En cours</span>
+                )}
+                {track.status === 'completed' && (
+                  <svg className="download-queue-track-status success" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                )}
+                {track.status === 'error' && (
+                  <svg className="download-queue-track-status error" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                )}
+                {(track.status === 'pending' || track.status === 'downloading') && (
+                  <button
+                    className="download-queue-track-cancel"
+                    onClick={() => handleSkipTrack(track.id)}
+                    title="Annuler cette piste"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                )}
+                {track.status === 'cancelled' && (
+                  <span className="download-queue-track-status cancelled-label">Annule</span>
+                )}
               </div>
             ))}
           </div>

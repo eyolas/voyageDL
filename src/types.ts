@@ -19,7 +19,8 @@ export interface DownloadProgressEvent {
   current: number;
   total: number;
   track_title: string;
-  status: 'downloading' | 'completed' | 'error';
+  track_id: string;
+  status: 'downloading' | 'completed' | 'error' | 'cancelled';
 }
 
 export interface DownloadResult {

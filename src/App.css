@@ -1339,17 +1339,58 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+  min-width: 0;
 }
 
-.download-queue-spinner {
-  animation: spin 1s linear infinite;
-  display: inline-block;
+.dq-current-track {
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dq-header-svg {
+  flex-shrink: 0;
+}
+
+.dq-header-svg.success { color: var(--color-success); }
+.dq-header-svg.warning { color: var(--color-warning); }
+.dq-header-svg.cancelled { color: var(--color-text-tertiary); }
+
+.dq-header-detail {
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-weight: 500;
 }
 
 .download-queue-actions {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+.download-queue-cancel {
+  background: none;
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.download-queue-cancel:hover {
+  background: var(--color-error-light);
+  border-color: var(--color-error);
 }
 
 .download-queue-clear {
@@ -1360,7 +1401,7 @@
   font-weight: 600;
   font-family: var(--font-body);
   cursor: pointer;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: var(--radius-full);
   transition: all var(--transition-fast);
 }
@@ -1381,17 +1422,11 @@
   transform: rotate(180deg);
 }
 
-.download-queue-body {
-  padding: 0 var(--spacing-lg) var(--spacing-md);
-}
-
 .download-queue-progress-bar {
   width: 100%;
   height: 3px;
   background: rgba(255, 255, 255, 0.06);
-  border-radius: var(--radius-full);
   overflow: hidden;
-  margin-bottom: var(--spacing-md);
 }
 
 .download-queue-progress-fill {
@@ -1400,11 +1435,14 @@
   background-size: 200% 100%;
   animation: shimmer 2s linear infinite;
   transition: width var(--transition-normal) ease-out;
-  border-radius: var(--radius-full);
+}
+
+.download-queue-body {
+  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-md);
 }
 
 .download-queue-tracks {
-  max-height: 200px;
+  max-height: 220px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1415,37 +1453,40 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 6px var(--spacing-md);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
+  padding: 7px var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: 13px;
   color: var(--color-text-secondary);
   font-weight: 500;
   transition: all var(--transition-fast);
 }
 
+.download-queue-track:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .download-queue-track.downloading {
   background: var(--color-primary-very-light);
   color: var(--color-primary);
+  font-weight: 600;
 }
 
 .download-queue-track.completed {
-  color: var(--color-success);
+  color: var(--color-text-primary);
 }
 
 .download-queue-track.error {
   color: var(--color-error);
 }
 
-.download-queue-track-icon {
-  flex-shrink: 0;
-  width: 16px;
-  text-align: center;
-  font-size: 11px;
+.download-queue-track.cancelled {
+  color: var(--color-text-tertiary);
+  opacity: 0.5;
 }
 
-.download-queue-track.downloading .download-queue-track-icon {
-  animation: spin 1s linear infinite;
-  display: inline-block;
+.download-queue-track.cancelled .download-queue-track-title {
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.15);
 }
 
 .download-queue-track-title {
@@ -1453,6 +1494,67 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.download-queue-track-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-very-light);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.download-queue-track-status {
+  flex-shrink: 0;
+}
+
+.download-queue-track-status.success {
+  color: var(--color-success);
+}
+
+.download-queue-track-status.error {
+  color: var(--color-error);
+}
+
+.download-queue-track-status.cancelled-label {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.download-queue-track-cancel {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  opacity: 0;
+}
+
+.download-queue-track:hover .download-queue-track-cancel {
+  opacity: 1;
+}
+
+.download-queue-track-cancel:hover {
+  color: var(--color-error);
+  background: var(--color-error-light);
+  border-color: rgba(251, 113, 133, 0.2);
+}
+
+/* Always show cancel button on downloading track */
+.download-queue-track.downloading .download-queue-track-cancel {
+  opacity: 1;
 }
 
 /* ==================== RESPONSIVE ==================== */

@@ -1,11 +1,39 @@
 /// Download management commands.
 ///
 /// Handles downloading tracks using yt-dlp and emitting progress updates to the frontend.
+/// Supports cancellation of all downloads or individual tracks.
 
 use crate::commands::{DownloadSummary, TrackInfo};
-use crate::utils::sidecar::{find_sidecar, run_sidecar_command_async};
+use crate::utils::sidecar::find_sidecar;
+use std::collections::HashSet;
 use std::path::Path;
-use tauri::{command, AppHandle, Emitter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use tauri::{command, AppHandle, Emitter, State};
+use tokio::process::Command as AsyncCommand;
+
+/// Shared state for download cancellation.
+pub struct DownloadState {
+    /// Flag to signal full cancellation of the download loop.
+    pub cancel_flag: AtomicBool,
+    /// PID of the currently running yt-dlp process (for killing on cancel).
+    pub current_pid: Mutex<Option<u32>>,
+    /// Track ID currently being downloaded.
+    pub current_track_id: Mutex<Option<String>>,
+    /// Set of track IDs to skip (for per-track cancellation).
+    pub skip_set: Mutex<HashSet<String>>,
+}
+
+impl DownloadState {
+    pub fn new() -> Self {
+        Self {
+            cancel_flag: AtomicBool::new(false),
+            current_pid: Mutex::new(None),
+            current_track_id: Mutex::new(None),
+            skip_set: Mutex::new(HashSet::new()),
+        }
+    }
+}
 
 /// Download progress event that is emitted to the frontend.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -13,31 +41,22 @@ struct DownloadProgress {
     current: usize,
     total: usize,
     track_title: String,
+    track_id: String,
     status: String,
 }
 
 /// Downloads a collection of tracks to the specified output directory.
-///
-/// This command:
-/// 1. Validates the output directory
-/// 2. For each track, runs yt-dlp to download the audio as MP3
-/// 3. Emits progress events to the frontend via the "download-progress" event
-/// 4. Collects any errors encountered
-/// 5. Returns a summary of the download operation
-///
-/// # Arguments
-/// * `app` - Tauri app handle (used for emitting events)
-/// * `tracks` - Vector of TrackInfo objects to download
-/// * `output_dir` - Directory where MP3 files will be saved
-///
-/// # Returns
-/// Returns a DownloadSummary with the results of the operation.
 #[command]
 pub async fn download_tracks(
     app: AppHandle,
+    state: State<'_, DownloadState>,
     tracks: Vec<TrackInfo>,
     output_dir: String,
 ) -> Result<DownloadSummary, String> {
+    // Reset state at the start of a new download batch
+    state.cancel_flag.store(false, Ordering::Relaxed);
+    state.skip_set.lock().unwrap().clear();
+
     // Validate output directory
     let output_path = Path::new(&output_dir);
     if !output_path.exists() {
@@ -64,25 +83,57 @@ pub async fn download_tracks(
     for (index, track) in tracks.iter().enumerate() {
         let current = index + 1;
         let track_title = track.title.clone();
+        let track_id = track.id.clone();
 
-        // Emit progress event
+        // Check full cancellation
+        if state.cancel_flag.load(Ordering::Relaxed) {
+            emit_progress(
+                &app,
+                DownloadProgress {
+                    current,
+                    total: total_tracks,
+                    track_title,
+                    track_id,
+                    status: "cancelled".to_string(),
+                },
+            );
+            break;
+        }
+
+        // Check if this track was individually skipped
+        if state.skip_set.lock().unwrap().contains(&track_id) {
+            emit_progress(
+                &app,
+                DownloadProgress {
+                    current,
+                    total: total_tracks,
+                    track_title,
+                    track_id,
+                    status: "cancelled".to_string(),
+                },
+            );
+            continue;
+        }
+
+        // Set current track ID
+        *state.current_track_id.lock().unwrap() = Some(track_id.clone());
+
+        // Emit downloading event
         emit_progress(
             &app,
             DownloadProgress {
                 current,
                 total: total_tracks,
                 track_title: track_title.clone(),
+                track_id: track_id.clone(),
                 status: "downloading".to_string(),
             },
         );
 
         // Build yt-dlp arguments
-        // Format: -x = extract audio, --audio-format mp3 = save as MP3
-        // --audio-quality 0 = best quality
-        // -o = output template
         let output_template = format!(
             "{}/%(title)s.%(ext)s",
-            output_dir.replace("\\", "/") // Normalize path separators
+            output_dir.replace("\\", "/")
         );
 
         let args = vec![
@@ -96,34 +147,75 @@ pub async fn download_tracks(
             track.url.clone(),
         ];
 
-        // Run yt-dlp
-        match run_sidecar_command_async(&yt_dlp_path, &args).await {
+        // Run yt-dlp with cancellation support
+        match run_cancellable(&yt_dlp_path, &args, &state).await {
             Ok(_) => {
-                summary.successful += 1;
+                // Check if cancelled or skipped during download
+                let was_skipped = state.skip_set.lock().unwrap().contains(&track_id);
+                let was_cancelled = state.cancel_flag.load(Ordering::Relaxed);
 
-                // Emit success event
+                if was_skipped || was_cancelled {
+                    emit_progress(
+                        &app,
+                        DownloadProgress {
+                            current,
+                            total: total_tracks,
+                            track_title,
+                            track_id,
+                            status: "cancelled".to_string(),
+                        },
+                    );
+                    if was_cancelled {
+                        break;
+                    }
+                    continue;
+                }
+
+                summary.successful += 1;
                 emit_progress(
                     &app,
                     DownloadProgress {
                         current,
                         total: total_tracks,
-                        track_title: track_title.clone(),
+                        track_title,
+                        track_id,
                         status: "completed".to_string(),
                     },
                 );
             }
             Err(e) => {
+                // Check if skipped or fully cancelled
+                let was_skipped = state.skip_set.lock().unwrap().contains(&track_id);
+                let was_cancelled = state.cancel_flag.load(Ordering::Relaxed);
+
+                if was_skipped || was_cancelled {
+                    emit_progress(
+                        &app,
+                        DownloadProgress {
+                            current,
+                            total: total_tracks,
+                            track_title,
+                            track_id,
+                            status: "cancelled".to_string(),
+                        },
+                    );
+                    if was_cancelled {
+                        break;
+                    }
+                    continue;
+                }
+
                 summary.failed += 1;
                 let error_msg = format!("Failed to download '{}': {}", track_title, e);
-                summary.errors.push(error_msg.clone());
+                summary.errors.push(error_msg);
 
-                // Emit error event
                 emit_progress(
                     &app,
                     DownloadProgress {
                         current,
                         total: total_tracks,
-                        track_title: track_title.clone(),
+                        track_title,
+                        track_id,
                         status: "error".to_string(),
                     },
                 );
@@ -131,12 +223,97 @@ pub async fn download_tracks(
         }
     }
 
+    // Clear state
+    *state.current_pid.lock().unwrap() = None;
+    *state.current_track_id.lock().unwrap() = None;
+
     Ok(summary)
+}
+
+/// Cancels all remaining downloads.
+#[command]
+pub async fn cancel_downloads(state: State<'_, DownloadState>) -> Result<(), String> {
+    state.cancel_flag.store(true, Ordering::Relaxed);
+    kill_current_process(&state);
+    Ok(())
+}
+
+/// Skips a single track by ID. If it's currently downloading, kills the process.
+#[command]
+pub async fn skip_track(state: State<'_, DownloadState>, track_id: String) -> Result<(), String> {
+    state.skip_set.lock().unwrap().insert(track_id.clone());
+
+    // If this track is currently downloading, kill the process
+    let is_current = state
+        .current_track_id
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(false, |id| id == &track_id);
+
+    if is_current {
+        kill_current_process(&state);
+    }
+
+    Ok(())
+}
+
+/// Kills the currently running yt-dlp process.
+fn kill_current_process(state: &DownloadState) {
+    if let Some(pid) = *state.current_pid.lock().unwrap() {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .output();
+    }
+}
+
+/// Runs a sidecar command with cancellation support.
+async fn run_cancellable(
+    binary_path: &Path,
+    args: &[String],
+    state: &DownloadState,
+) -> Result<String, String> {
+    let child = AsyncCommand::new(binary_path)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to execute {}: {}", binary_path.display(), e))?;
+
+    // Store PID for cancellation
+    if let Some(pid) = child.id() {
+        *state.current_pid.lock().unwrap() = Some(pid);
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("Process error: {}", e))?;
+
+    // Clear PID
+    *state.current_pid.lock().unwrap() = None;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let error_msg = if !stderr.is_empty() {
+            stderr.to_string()
+        } else {
+            stdout.to_string()
+        };
+        return Err(format!(
+            "Command failed with status {}: {}",
+            output.status, error_msg
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|e| format!("Failed to decode output: {}", e))?;
+    Ok(stdout)
 }
 
 /// Helper function to emit a download progress event to the frontend.
 fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
-    // Emit the event; if it fails, we just log it and continue
     if let Err(e) = app.emit("download-progress", &progress) {
         eprintln!("Failed to emit download-progress event: {}", e);
     }

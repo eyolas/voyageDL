@@ -8,6 +8,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .manage(DownloadState::new())
         .invoke_handler(tauri::generate_handler![
             // Config commands
             get_config,
@@ -22,6 +23,8 @@ fn main() {
 
             // Download commands
             download_tracks,
+            cancel_downloads,
+            skip_track,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
