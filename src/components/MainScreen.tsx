@@ -201,6 +201,31 @@ export function MainScreen({
           </div>
         </div>
 
+        {loading && (
+          <div className="analyze-loading">
+            <div className="analyze-loading-content">
+              <div className="equalizer" style={{ justifyContent: 'center', height: '36px' }}>
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+              </div>
+              <div className="analyze-loading-text">
+                <span className="analyze-loading-title">Analyse en cours...</span>
+                <span className="analyze-loading-detail">
+                  {detectURLType(urlInput)?.type === 'deezer'
+                    ? 'Recuperation de la playlist Deezer'
+                    : 'Recuperation des informations YouTube'}
+                </span>
+              </div>
+            </div>
+            <div className="analyze-loading-bar">
+              <div className="analyze-loading-bar-fill" />
+            </div>
+          </div>
+        )}
+
         {tracks.length > 0 && (
           <TrackList
             tracks={tracks}
@@ -208,21 +233,15 @@ export function MainScreen({
           />
         )}
 
-        {!loading && tracks.length === 0 && urlInput.trim() === '' && (
-          <div style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textAlign: 'center',
-          }}>
-            <div style={{ opacity: 0.5 }}>
-              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '16px' }}>
+        {!loading && tracks.length === 0 && (
+          <div className="main-empty-state">
+            <div className="main-empty-state-inner">
+              <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 18V5l12-2v13" />
                 <circle cx="6" cy="18" r="3" />
                 <circle cx="18" cy="16" r="3" />
               </svg>
-              <p style={{ color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-display)', fontWeight: 500, fontSize: '15px' }}>
+              <p className="main-empty-state-text">
                 Colle une URL YouTube ou Deezer pour commencer
               </p>
             </div>
