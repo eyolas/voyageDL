@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { TrackInfo, AppConfig, AnalyzeProgressEvent } from '../types';
@@ -44,12 +45,17 @@ export function MainScreen({
   onAddToQueue,
 }: MainScreenProps) {
   const [urlInput, setUrlInput] = useState('');
+  const [appVersion, setAppVersion] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [activeAnalyses, setActiveAnalyses] = useState<ActiveAnalysis[]>([]);
   const [results, setResults] = useState<AnalyzeResult[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   // Track which analysis ID is the latest Deezer (receives progress events)
   const latestDeezerIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   // Listen to analyze-progress events - route to the latest Deezer analysis
   useEffect(() => {
@@ -192,6 +198,7 @@ export function MainScreen({
             <circle cx="18" cy="16" r="3" />
           </svg>
           Voyage DL
+          {appVersion && <span className="app-version">v{appVersion}</span>}
         </h1>
         <div className="main-header-actions">
           <button className="settings-button" onClick={onSettingsClick} title="Parametres">
