@@ -2,10 +2,11 @@
  * MainScreen - Main interface for URL analysis and track selection
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { TrackInfo, AppConfig } from '../types';
+import { TrackInfo, AppConfig, AnalyzeProgressEvent } from '../types';
 import { TrackList } from './TrackList';
 import { Alert } from './Alert';
 
@@ -33,6 +34,21 @@ export function MainScreen({
   const [loading, setLoading] = useState(false);
   const [tracks, setTracks] = useState<TrackInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgressEvent | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+
+  // Listen to analyze-progress events from Deezer fetch
+  useEffect(() => {
+    const setup = async () => {
+      console.log('[MainScreen] Setting up analyze-progress listener');
+      unlistenRef.current = await listen<AnalyzeProgressEvent>('analyze-progress', (event) => {
+        console.log('[MainScreen] analyze-progress event received:', event.payload.current, '/', event.payload.total);
+        setAnalyzeProgress(event.payload);
+      });
+    };
+    setup();
+    return () => { unlistenRef.current?.(); };
+  }, []);
 
   // Detect URL type (YouTube or Deezer)
   const detectURLType = (url: string): DetectedURL | null => {
@@ -65,6 +81,7 @@ export function MainScreen({
       }
 
       setLoading(true);
+      setAnalyzeProgress(null);
 
       if (detected.type === 'youtube') {
         const result = await invoke<TrackInfo[]>('fetch_youtube_info', {
@@ -84,6 +101,7 @@ export function MainScreen({
       console.error('Error analyzing URL:', err);
     } finally {
       setLoading(false);
+      setAnalyzeProgress(null);
     }
   };
 
@@ -212,16 +230,36 @@ export function MainScreen({
                 <div className="equalizer-bar" />
               </div>
               <div className="analyze-loading-text">
-                <span className="analyze-loading-title">Analyse en cours...</span>
-                <span className="analyze-loading-detail">
-                  {detectURLType(urlInput)?.type === 'deezer'
-                    ? 'Recuperation de la playlist Deezer'
-                    : 'Recuperation des informations YouTube'}
-                </span>
+                {analyzeProgress ? (
+                  <>
+                    <span className="analyze-loading-title">
+                      Recherche YouTube {analyzeProgress.current}/{analyzeProgress.total}
+                    </span>
+                    <span className="analyze-loading-detail">
+                      {analyzeProgress.artist} — {analyzeProgress.track_title}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="analyze-loading-title">Analyse en cours...</span>
+                    <span className="analyze-loading-detail">
+                      {detectURLType(urlInput)?.type === 'deezer'
+                        ? 'Recuperation de la playlist Deezer'
+                        : 'Recuperation des informations YouTube'}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
             <div className="analyze-loading-bar">
-              <div className="analyze-loading-bar-fill" />
+              <div
+                className="analyze-loading-bar-fill"
+                style={analyzeProgress ? {
+                  animation: 'none',
+                  width: `${(analyzeProgress.current / analyzeProgress.total) * 100}%`,
+                  transition: 'width 0.3s ease-out',
+                } : undefined}
+              />
             </div>
           </div>
         )}

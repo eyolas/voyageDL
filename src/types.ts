@@ -32,3 +32,11 @@ export interface DownloadResult {
 export interface SelectedTrack extends TrackInfo {
   selected: boolean;
 }
+
+export interface AnalyzeProgressEvent {
+  current: number;
+  total: number;
+  track_title: string;
+  artist: string;
+  status: string;
+}

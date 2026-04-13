@@ -5,10 +5,20 @@
 
 use crate::commands::cache::FetchCache;
 use crate::commands::TrackInfo;
-use crate::utils::sidecar::{find_sidecar, run_sidecar_command};
+use crate::utils::sidecar::{find_sidecar, run_sidecar_command_async};
 use reqwest::Client;
 use serde::Deserialize;
-use tauri::{command, State};
+use tauri::{command, AppHandle, Emitter, Manager, State};
+
+/// Progress event emitted during Deezer playlist analysis.
+#[derive(Debug, Clone, serde::Serialize)]
+struct AnalyzeProgress {
+    current: usize,
+    total: usize,
+    track_title: String,
+    artist: String,
+    status: String,
+}
 
 /// Dev-only logging macro. Compiles to nothing in release builds.
 macro_rules! dev_log {
@@ -59,6 +69,7 @@ struct DeezerArtist {
 /// 4. Returns a list of TrackInfo objects ready for download
 #[command]
 pub async fn fetch_deezer_playlist(
+    app: AppHandle,
     cache: State<'_, FetchCache>,
     url: String,
 ) -> Result<Vec<TrackInfo>, String> {
@@ -158,9 +169,28 @@ pub async fn fetch_deezer_playlist(
             idx + 1, total, deezer_track.artist.name, deezer_track.title
         );
 
+        // Emit progress to frontend via the webview window
+        let progress = AnalyzeProgress {
+            current: idx + 1,
+            total,
+            track_title: deezer_track.title.clone(),
+            artist: deezer_track.artist.name.clone(),
+            status: "searching".to_string(),
+        };
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(e) = window.emit("analyze-progress", &progress) {
+                dev_log!("ERREUR emit analyze-progress: {}", e);
+            }
+        } else {
+            dev_log!("ERREUR: fenetre 'main' introuvable");
+        }
+
+        // Yield to let the event loop deliver the event to the webview
+        tokio::task::yield_now().await;
+
         let yt_args = vec!["--dump-json".to_string(), search_query];
 
-        match run_sidecar_command(&yt_dlp_path, &yt_args) {
+        match run_sidecar_command_async(&yt_dlp_path, &yt_args).await {
             Ok(yt_json_str) => {
                 if let Ok(yt_json) = serde_json::from_str::<serde_json::Value>(&yt_json_str) {
                     if let Some(yt_id) = yt_json.get("id").and_then(|v| v.as_str()) {
