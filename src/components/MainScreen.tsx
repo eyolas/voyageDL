@@ -1,8 +1,9 @@
 /**
- * MainScreen - Main interface for URL analysis and track selection
+ * MainScreen - Main interface for URL analysis and track selection.
+ * Supports multiple analyses, pause, and cancel.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -17,12 +18,16 @@ interface MainScreenProps {
   onAddToQueue: (tracks: TrackInfo[]) => void;
 }
 
-type URLType = 'youtube' | 'deezer' | null;
+type URLType = 'youtube' | 'deezer';
 
-interface DetectedURL {
-  type: URLType;
+interface AnalyzeResult {
+  id: string;
   url: string;
+  urlType: URLType;
+  tracks: TrackInfo[];
 }
+
+let resultCounter = 0;
 
 export function MainScreen({
   config,
@@ -32,28 +37,30 @@ export function MainScreen({
 }: MainScreenProps) {
   const [urlInput, setUrlInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [tracks, setTracks] = useState<TrackInfo[]>([]);
+  const [paused, setPaused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgressEvent | null>(null);
+  const [results, setResults] = useState<AnalyzeResult[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
-  // Listen to analyze-progress events from Deezer fetch
+  // Listen to analyze-progress events
   useEffect(() => {
     const setup = async () => {
-      console.log('[MainScreen] Setting up analyze-progress listener');
       unlistenRef.current = await listen<AnalyzeProgressEvent>('analyze-progress', (event) => {
-        console.log('[MainScreen] analyze-progress event received:', event.payload.current, '/', event.payload.total);
         setAnalyzeProgress(event.payload);
+        if (event.payload.status === 'paused') {
+          setPaused(true);
+        } else {
+          setPaused(false);
+        }
       });
     };
     setup();
     return () => { unlistenRef.current?.(); };
   }, []);
 
-  // Detect URL type (YouTube or Deezer)
-  const detectURLType = (url: string): DetectedURL | null => {
+  const detectURLType = (url: string): { type: URLType; url: string } | null => {
     const trimmedUrl = url.trim();
-
     if (
       trimmedUrl.includes('youtube.com') ||
       trimmedUrl.includes('youtu.be') ||
@@ -61,46 +68,48 @@ export function MainScreen({
     ) {
       return { type: 'youtube', url: trimmedUrl };
     }
-
     if (trimmedUrl.includes('deezer.com')) {
       return { type: 'deezer', url: trimmedUrl };
     }
-
     return null;
   };
 
   const handleAnalyze = async () => {
-    try {
-      setError(null);
-      setTracks([]);
+    const detected = detectURLType(urlInput);
+    if (!detected) {
+      setError('Veuillez entrer une URL YouTube ou Deezer valide');
+      return;
+    }
 
-      const detected = detectURLType(urlInput);
-      if (!detected) {
-        setError('Veuillez entrer une URL YouTube ou Deezer valide');
-        return;
+    setError(null);
+    setLoading(true);
+    setPaused(false);
+    setAnalyzeProgress(null);
+
+    const analyzedUrl = urlInput;
+    setUrlInput('');
+
+    try {
+      let tracks: TrackInfo[];
+      if (detected.type === 'youtube') {
+        tracks = await invoke<TrackInfo[]>('fetch_youtube_info', { url: detected.url });
+      } else {
+        tracks = await invoke<TrackInfo[]>('fetch_deezer_playlist', { url: detected.url });
       }
 
-      setLoading(true);
-      setAnalyzeProgress(null);
-
-      if (detected.type === 'youtube') {
-        const result = await invoke<TrackInfo[]>('fetch_youtube_info', {
-          url: detected.url,
-        });
-        setTracks(result);
-      } else if (detected.type === 'deezer') {
-        const result = await invoke<TrackInfo[]>('fetch_deezer_playlist', {
-          url: detected.url,
-        });
-        setTracks(result);
+      if (tracks.length > 0) {
+        resultCounter += 1;
+        setResults((prev) => [
+          { id: `result-${resultCounter}`, url: analyzedUrl, urlType: detected.type, tracks },
+          ...prev,
+        ]);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       setError(errorMsg);
-      setTracks([]);
-      console.error('Error analyzing URL:', err);
     } finally {
       setLoading(false);
+      setPaused(false);
       setAnalyzeProgress(null);
     }
   };
@@ -111,13 +120,29 @@ export function MainScreen({
     }
   };
 
+  const handleCancel = async () => {
+    try {
+      await invoke('cancel_analyze');
+    } catch (err) {
+      console.error('Failed to cancel analyze:', err);
+    }
+  };
+
+  const handleTogglePause = async () => {
+    try {
+      const isPaused = await invoke<boolean>('toggle_pause_analyze');
+      setPaused(isPaused);
+    } catch (err) {
+      console.error('Failed to toggle pause:', err);
+    }
+  };
+
   const handleChangeFolder = async () => {
     try {
       const selected = await open({
         directory: true,
         title: 'Selectionner le dossier de telechargement',
       });
-
       if (selected && typeof selected === 'string') {
         await onChangeFolder(selected);
       }
@@ -126,11 +151,14 @@ export function MainScreen({
     }
   };
 
-  const handleAddToQueue = (selectedTracks: TrackInfo[]) => {
+  const handleAddToQueue = useCallback((resultId: string, selectedTracks: TrackInfo[]) => {
     onAddToQueue(selectedTracks);
-    setTracks([]);
-    setUrlInput('');
-  };
+    setResults((prev) => prev.filter((r) => r.id !== resultId));
+  }, [onAddToQueue]);
+
+  const handleDismissResult = useCallback((resultId: string) => {
+    setResults((prev) => prev.filter((r) => r.id !== resultId));
+  }, []);
 
   return (
     <div className="screen main-screen">
@@ -186,32 +214,17 @@ export function MainScreen({
             >
               {loading ? (
                 <>
-                  <svg
-                    className="spinner"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="1"></circle>
-                    <path d="M12 1v6"></path>
-                    <path d="M12 17v6"></path>
-                    <path d="M4.22 4.22l4.24 4.24"></path>
-                    <path d="M15.54 15.54l4.24 4.24"></path>
-                    <path d="M1 12h6"></path>
-                    <path d="M17 12h6"></path>
-                    <path d="M4.22 19.78l4.24-4.24"></path>
-                    <path d="M15.54 8.46l4.24-4.24"></path>
+                  <svg className="spinner" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
                   </svg>
                   Analyse...
                 </>
               ) : (
                 <>
-                  <span>🔍</span>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
                   Analyser
                 </>
               )}
@@ -219,21 +232,29 @@ export function MainScreen({
           </div>
         </div>
 
+        {/* Active analysis */}
         {loading && (
           <div className="analyze-loading">
             <div className="analyze-loading-content">
-              <div className="equalizer" style={{ justifyContent: 'center', height: '36px' }}>
-                <div className="equalizer-bar" />
-                <div className="equalizer-bar" />
-                <div className="equalizer-bar" />
-                <div className="equalizer-bar" />
-                <div className="equalizer-bar" />
-              </div>
+              {paused ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--color-warning)" stroke="none">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              ) : (
+                <div className="equalizer" style={{ justifyContent: 'center', height: '36px' }}>
+                  <div className="equalizer-bar" />
+                  <div className="equalizer-bar" />
+                  <div className="equalizer-bar" />
+                  <div className="equalizer-bar" />
+                  <div className="equalizer-bar" />
+                </div>
+              )}
               <div className="analyze-loading-text">
                 {analyzeProgress ? (
                   <>
                     <span className="analyze-loading-title">
-                      Recherche YouTube {analyzeProgress.current}/{analyzeProgress.total}
+                      {paused ? 'En pause' : 'Recherche YouTube'} {analyzeProgress.current}/{analyzeProgress.total}
                     </span>
                     <span className="analyze-loading-detail">
                       {analyzeProgress.artist} — {analyzeProgress.track_title}
@@ -243,19 +264,41 @@ export function MainScreen({
                   <>
                     <span className="analyze-loading-title">Analyse en cours...</span>
                     <span className="analyze-loading-detail">
-                      {detectURLType(urlInput)?.type === 'deezer'
-                        ? 'Recuperation de la playlist Deezer'
-                        : 'Recuperation des informations YouTube'}
+                      Recuperation des informations
                     </span>
                   </>
                 )}
               </div>
             </div>
+            <div className="analyze-loading-actions">
+              {analyzeProgress && (
+                <button className="analyze-action-btn pause" onClick={handleTogglePause} title={paused ? 'Reprendre' : 'Pause'}>
+                  {paused ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                      <rect x="6" y="4" width="4" height="16" rx="1" />
+                      <rect x="14" y="4" width="4" height="16" rx="1" />
+                    </svg>
+                  )}
+                  {paused ? 'Reprendre' : 'Pause'}
+                </button>
+              )}
+              <button className="analyze-action-btn cancel" onClick={handleCancel} title="Annuler">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+                Annuler
+              </button>
+            </div>
             <div className="analyze-loading-bar">
               <div
                 className="analyze-loading-bar-fill"
                 style={analyzeProgress ? {
-                  animation: 'none',
+                  animation: paused ? 'none' : undefined,
                   width: `${(analyzeProgress.current / analyzeProgress.total) * 100}%`,
                   transition: 'width 0.3s ease-out',
                 } : undefined}
@@ -264,14 +307,28 @@ export function MainScreen({
           </div>
         )}
 
-        {tracks.length > 0 && (
-          <TrackList
-            tracks={tracks}
-            onAddToQueue={handleAddToQueue}
-          />
-        )}
+        {/* Results list */}
+        {results.map((result) => (
+          <div key={result.id} className="analyze-result">
+            <div className="analyze-result-header">
+              <span className="analyze-result-badge">{result.urlType === 'deezer' ? 'Deezer' : 'YouTube'}</span>
+              <span className="analyze-result-count">{result.tracks.length} piste{result.tracks.length > 1 ? 's' : ''}</span>
+              <button className="analyze-result-dismiss" onClick={() => handleDismissResult(result.id)} title="Fermer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <TrackList
+              tracks={result.tracks}
+              onAddToQueue={(selectedTracks) => handleAddToQueue(result.id, selectedTracks)}
+            />
+          </div>
+        ))}
 
-        {!loading && tracks.length === 0 && (
+        {/* Empty state */}
+        {!loading && results.length === 0 && (
           <div className="main-empty-state">
             <div className="main-empty-state-inner">
               <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

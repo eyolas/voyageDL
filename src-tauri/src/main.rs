@@ -1,13 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use voyage_dl::commands::{
-    cache::FetchCache, config::*, youtube::*, deezer::*, download::*
+    analyze::*, cache::FetchCache, config::*, youtube::*, deezer::*, download::*
 };
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .manage(AnalyzeState::new())
         .manage(DownloadState::new())
         .manage(FetchCache::new())
         .invoke_handler(tauri::generate_handler![
@@ -15,6 +16,10 @@ fn main() {
             get_config,
             save_config,
             select_download_dir,
+
+            // Analyze commands
+            cancel_analyze,
+            toggle_pause_analyze,
 
             // YouTube commands
             fetch_youtube_info,

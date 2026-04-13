@@ -3,12 +3,14 @@
 /// Handles extracting track information from Deezer playlists via the public API
 /// and searching for those tracks on YouTube.
 
+use crate::commands::analyze::AnalyzeState;
 use crate::commands::cache::FetchCache;
 use crate::commands::TrackInfo;
-use crate::utils::sidecar::{find_sidecar, run_sidecar_command_async};
+use crate::utils::sidecar::find_sidecar;
 use reqwest::Client;
 use serde::Deserialize;
 use tauri::{command, AppHandle, Emitter, Manager, State};
+use tokio::process::Command as AsyncCommand;
 
 /// Progress event emitted during Deezer playlist analysis.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -70,9 +72,11 @@ struct DeezerArtist {
 #[command]
 pub async fn fetch_deezer_playlist(
     app: AppHandle,
+    analyze_state: State<'_, AnalyzeState>,
     cache: State<'_, FetchCache>,
     url: String,
 ) -> Result<Vec<TrackInfo>, String> {
+    analyze_state.reset();
     dev_log!("Starting fetch for {}", url);
 
     let client = Client::new();
@@ -154,6 +158,30 @@ pub async fn fetch_deezer_playlist(
     let total = deezer_tracks.len();
 
     for (idx, deezer_track) in deezer_tracks.iter().enumerate() {
+        // Check cancel
+        if analyze_state.is_cancelled() {
+            dev_log!("Analysis cancelled at track {}/{}", idx + 1, total);
+            break;
+        }
+
+        // Wait while paused
+        while analyze_state.is_paused() {
+            if analyze_state.is_cancelled() {
+                break;
+            }
+            let progress = AnalyzeProgress {
+                current: idx + 1,
+                total,
+                track_title: deezer_track.title.clone(),
+                artist: deezer_track.artist.name.clone(),
+                status: "paused".to_string(),
+            };
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.emit("analyze-progress", &progress);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+
         let search_query = format!(
             "ytsearch1:{} {}",
             deezer_track.artist.name, deezer_track.title
@@ -186,37 +214,60 @@ pub async fn fetch_deezer_playlist(
 
         let yt_args = vec!["--dump-json".to_string(), search_query.clone()];
 
-        match run_sidecar_command_async(&yt_dlp_path, &yt_args).await {
-            Ok(yt_json_str) => {
-                if let Ok(yt_json) = serde_json::from_str::<serde_json::Value>(&yt_json_str) {
-                    if let Some(yt_id) = yt_json.get("id").and_then(|v| v.as_str()) {
-                        dev_log!("[{}/{}] Found: https://youtube.com/watch?v={}", idx + 1, total, yt_id);
-                        let track_info = TrackInfo {
-                            id: yt_id.to_string(),
-                            title: deezer_track.title.clone(),
-                            artist: deezer_track.artist.name.clone(),
-                            url: format!("https://www.youtube.com/watch?v={}", yt_id),
-                            thumbnail_url: yt_json
-                                .get("thumbnail")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            duration_seconds: deezer_track.duration,
-                        };
+        // Spawn yt-dlp with PID tracking for cancellation
+        let child = AsyncCommand::new(&yt_dlp_path)
+            .args(&yt_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
-                        // Cache this track individually
-                        cache.set_track(&search_query, &track_info);
-                        tracks.push(track_info);
-                    } else {
-                        dev_log!("[{}/{}] No YouTube ID in response", idx + 1, total);
-                    }
+        if let Some(pid) = child.id() {
+            *analyze_state.current_pid.lock().unwrap() = Some(pid);
+        }
+
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| format!("yt-dlp process error: {}", e))?;
+
+        *analyze_state.current_pid.lock().unwrap() = None;
+
+        // Check if cancelled during yt-dlp
+        if analyze_state.is_cancelled() {
+            dev_log!("Analysis cancelled during search for track {}/{}", idx + 1, total);
+            break;
+        }
+
+        if output.status.success() {
+            let yt_json_str = String::from_utf8_lossy(&output.stdout);
+            if let Ok(yt_json) = serde_json::from_str::<serde_json::Value>(&yt_json_str) {
+                if let Some(yt_id) = yt_json.get("id").and_then(|v| v.as_str()) {
+                    dev_log!("[{}/{}] Found: https://youtube.com/watch?v={}", idx + 1, total, yt_id);
+                    let track_info = TrackInfo {
+                        id: yt_id.to_string(),
+                        title: deezer_track.title.clone(),
+                        artist: deezer_track.artist.name.clone(),
+                        url: format!("https://www.youtube.com/watch?v={}", yt_id),
+                        thumbnail_url: yt_json
+                            .get("thumbnail")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        duration_seconds: deezer_track.duration,
+                    };
+
+                    cache.set_track(&search_query, &track_info);
+                    tracks.push(track_info);
                 } else {
-                    dev_log!("[{}/{}] YouTube JSON parsing error", idx + 1, total);
+                    dev_log!("[{}/{}] No YouTube ID in response", idx + 1, total);
                 }
+            } else {
+                dev_log!("[{}/{}] YouTube JSON parsing error", idx + 1, total);
             }
-            Err(e) => {
-                dev_log!("[{}/{}] ERREUR recherche: {}", idx + 1, total, e);
-            }
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            dev_log!("[{}/{}] yt-dlp ERROR: {}", idx + 1, total, stderr);
         }
     }
 

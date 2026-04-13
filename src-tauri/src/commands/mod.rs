@@ -2,6 +2,7 @@
 ///
 /// This module organizes all Tauri commands into submodules for better maintainability.
 
+pub mod analyze;
 pub mod cache;
 pub mod config;
 pub mod youtube;
