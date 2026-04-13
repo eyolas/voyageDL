@@ -87,14 +87,34 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
           status: 'pending' as const,
         }));
         setQueuedTracks((prev) => [...prev, ...newTracks]);
+        setProgress((prev) => ({ current: prev.current, total: prev.total + job.tracks.length }));
 
         try {
-          await invoke<DownloadResult>('download_tracks', {
+          const result = await invoke<DownloadResult>('download_tracks', {
             tracks: job.tracks,
             outputDir: job.outputDir,
           });
+
+          // Ensure all tracks from this job have a final status
+          const jobTitles = new Set(job.tracks.map((t) => t.title));
+          setQueuedTracks((prev) =>
+            prev.map((t) =>
+              jobTitles.has(t.title) && t.status === 'pending'
+                ? { ...t, status: result.failed > 0 ? 'error' : 'completed' }
+                : t
+            )
+          );
         } catch (error) {
           console.error('Download job failed:', error);
+          // Mark all pending tracks from this job as error
+          const jobTitles = new Set(job.tracks.map((t) => t.title));
+          setQueuedTracks((prev) =>
+            prev.map((t) =>
+              jobTitles.has(t.title) && (t.status === 'pending' || t.status === 'downloading')
+                ? { ...t, status: 'error' }
+                : t
+            )
+          );
         }
 
         setCurrentTrack(null);

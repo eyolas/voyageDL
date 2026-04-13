@@ -118,7 +118,11 @@ export function MainScreen({
     <div className="screen main-screen">
       <div className="main-header">
         <h1 className="main-header-title">
-          <span className="main-header-icon">🎵</span>
+          <svg className="main-header-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 18V5l12-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="18" cy="16" r="3" />
+          </svg>
           Voyage DL
         </h1>
         <div className="main-header-actions">
@@ -210,12 +214,17 @@ export function MainScreen({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--color-text-secondary)',
             textAlign: 'center',
           }}>
-            <div>
-              <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎬</div>
-              <p>Colle une URL YouTube ou Deezer pour commencer</p>
+            <div style={{ opacity: 0.5 }}>
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '16px' }}>
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
+              </svg>
+              <p style={{ color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-display)', fontWeight: 500, fontSize: '15px' }}>
+                Colle une URL YouTube ou Deezer pour commencer
+              </p>
             </div>
           </div>
         )}

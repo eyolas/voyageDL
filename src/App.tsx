@@ -73,14 +73,14 @@ function App() {
             justifyContent: 'center',
           }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{
-                fontSize: '48px',
-                marginBottom: '16px',
-                animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              }}>
-                🎵
+              <div className="equalizer" style={{ justifyContent: 'center', height: '40px', marginBottom: '20px' }}>
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
+                <div className="equalizer-bar" />
               </div>
-              <p>Chargement...</p>
+              <p style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text-secondary)', fontWeight: 500 }}>Chargement...</p>
             </div>
           </div>
         </div>
