@@ -164,6 +164,7 @@ pub fn kill_process(pid: u32) {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let mut cmd = Command::new("taskkill");
         cmd.args(["/PID", &pid.to_string(), "/F"]);
         cmd.creation_flags(CREATE_NO_WINDOW);
