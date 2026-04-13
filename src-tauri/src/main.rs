@@ -26,6 +26,7 @@ fn main() {
 
             // Deezer commands
             fetch_deezer_playlist,
+            fetch_deezer_track,
 
             // Cache commands
             clear_youtube_cache,

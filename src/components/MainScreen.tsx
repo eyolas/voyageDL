@@ -19,7 +19,7 @@ interface MainScreenProps {
   onAddToQueue: (tracks: TrackInfo[]) => void;
 }
 
-type URLType = 'youtube' | 'deezer';
+type URLType = 'youtube' | 'deezer' | 'deezer-track';
 
 interface ActiveAnalysis {
   id: string;
@@ -89,6 +89,9 @@ export function MainScreen({
     ) {
       return { type: 'youtube', url: trimmedUrl };
     }
+    if (trimmedUrl.includes('deezer.com') && trimmedUrl.includes('/track/')) {
+      return { type: 'deezer-track', url: trimmedUrl };
+    }
     if (trimmedUrl.includes('deezer.com')) {
       return { type: 'deezer', url: trimmedUrl };
     }
@@ -118,12 +121,17 @@ export function MainScreen({
     setActiveAnalyses((prev) => [...prev, newAnalysis]);
     setUrlInput('');
 
-    if (detected.type === 'deezer') {
+    if (detected.type === 'deezer' || detected.type === 'deezer-track') {
       latestDeezerIdRef.current = analysisId;
     }
 
-    invoke<TrackInfo[]>(
-      detected.type === 'youtube' ? 'fetch_youtube_info' : 'fetch_deezer_playlist',
+    const commandName = detected.type === 'youtube'
+      ? 'fetch_youtube_info'
+      : detected.type === 'deezer-track'
+        ? 'fetch_deezer_track'
+        : 'fetch_deezer_playlist';
+
+    invoke<TrackInfo[]>(commandName,
       { url: detected.url },
     )
       .then((tracks) => {
@@ -283,7 +291,7 @@ export function MainScreen({
                 ) : (
                   <>
                     <span className="analyze-loading-title">
-                      Analyse {analysis.urlType === 'deezer' ? 'Deezer' : 'YouTube'}...
+                      Analyse {analysis.urlType.startsWith('deezer') ? 'Deezer' : 'YouTube'}...
                     </span>
                     <span className="analyze-loading-detail analyze-loading-url">
                       {analysis.url}
@@ -292,7 +300,7 @@ export function MainScreen({
                 )}
               </div>
             </div>
-            {analysis.urlType === 'deezer' && (
+            {analysis.urlType.startsWith('deezer') && (
               <div className="analyze-loading-actions">
                 {analysis.progress && (
                   <button className="analyze-action-btn pause" onClick={handleTogglePause} title={analysis.paused ? 'Reprendre' : 'Pause'}>
@@ -335,7 +343,7 @@ export function MainScreen({
         {results.map((result) => (
           <div key={result.id} className="analyze-result">
             <div className="analyze-result-header">
-              <span className="analyze-result-badge">{result.urlType === 'deezer' ? 'Deezer' : 'YouTube'}</span>
+              <span className="analyze-result-badge">{result.urlType.startsWith('deezer') ? 'Deezer' : 'YouTube'}</span>
               <span className="analyze-result-count">{result.tracks.length} piste{result.tracks.length > 1 ? 's' : ''}</span>
               <button className="analyze-result-dismiss" onClick={() => handleDismissResult(result.id)} title="Fermer">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

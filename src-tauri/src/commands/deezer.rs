@@ -291,6 +291,114 @@ pub async fn fetch_deezer_playlist(
     Ok(tracks)
 }
 
+/// Fetches a single track from Deezer and searches for it on YouTube.
+#[command]
+pub async fn fetch_deezer_track(
+    app: AppHandle,
+    analyze_state: State<'_, AnalyzeState>,
+    cache: State<'_, FetchCache>,
+    url: String,
+) -> Result<Vec<TrackInfo>, String> {
+    analyze_state.reset();
+    dev_log!("Starting track fetch for {}", url);
+
+    let track_id = extract_track_id(&url)?;
+
+    let client = Client::new();
+    let api_url = format!("https://api.deezer.com/track/{}", track_id);
+    dev_log!("Calling Deezer API: {}", api_url);
+
+    let response = client
+        .get(&api_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch Deezer track: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Failed to fetch track (status {})", response.status()));
+    }
+
+    let body = response.text().await
+        .map_err(|e| format!("Failed to read Deezer response: {}", e))?;
+
+    #[derive(Deserialize)]
+    struct DeezerSingleTrack {
+        title: String,
+        #[serde(default)]
+        duration: u32,
+        artist: DeezerArtist,
+        #[serde(default)]
+        album: Option<DeezerAlbum>,
+    }
+
+    let deezer_track: DeezerSingleTrack = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse Deezer track: {}", e))?;
+
+    let search_query = format!("ytsearch1:{} {}", deezer_track.artist.name, deezer_track.title);
+
+    // Check per-track cache
+    if let Some(cached) = cache.get_track(&search_query) {
+        dev_log!("Cache hit: {} - {}", deezer_track.artist.name, deezer_track.title);
+        return Ok(vec![cached]);
+    }
+
+    dev_log!("YT search: {} - {}", deezer_track.artist.name, deezer_track.title);
+
+    // Emit progress
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("analyze-progress", &AnalyzeProgress {
+            current: 1,
+            total: 1,
+            track_title: deezer_track.title.clone(),
+            artist: deezer_track.artist.name.clone(),
+            status: "searching".to_string(),
+        });
+    }
+
+    let yt_dlp_path = find_sidecar("yt-dlp").map_err(|e| format!("yt-dlp not found: {}", e))?;
+    let yt_args = vec!["--dump-json".to_string(), search_query.clone()];
+
+    let child = spawn_sidecar(&yt_dlp_path, &yt_args)?;
+    if let Some(pid) = child.id() {
+        *analyze_state.current_pid.lock().unwrap() = Some(pid);
+    }
+
+    let output = child.wait_with_output().await
+        .map_err(|e| format!("yt-dlp process error: {}", e))?;
+    *analyze_state.current_pid.lock().unwrap() = None;
+
+    if analyze_state.is_cancelled() {
+        return Ok(vec![]);
+    }
+
+    if !output.status.success() {
+        return Err(format!("Failed to find track on YouTube"));
+    }
+
+    let yt_json_str = String::from_utf8_lossy(&output.stdout);
+    let yt_json: serde_json::Value = serde_json::from_str(&yt_json_str)
+        .map_err(|_| "Failed to parse YouTube response".to_string())?;
+
+    let yt_id = yt_json.get("id").and_then(|v| v.as_str())
+        .ok_or_else(|| "No YouTube video found".to_string())?;
+
+    let track_info = TrackInfo {
+        id: yt_id.to_string(),
+        title: deezer_track.title,
+        artist: deezer_track.artist.name,
+        url: format!("https://www.youtube.com/watch?v={}", yt_id),
+        thumbnail_url: yt_json.get("thumbnail").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        duration_seconds: deezer_track.duration,
+        album: deezer_track.album.as_ref().map(|a| a.title.clone()),
+        album_cover_url: deezer_track.album.as_ref().and_then(|a| a.cover_big.clone()),
+        track_number: Some(1),
+        year: None,
+    };
+
+    cache.set_track(&search_query, &track_info);
+    Ok(vec![track_info])
+}
+
 /// Extracts the playlist ID from a Deezer playlist URL.
 ///
 /// Supports formats like:
@@ -311,4 +419,20 @@ fn extract_playlist_id(url: &str) -> Result<String, String> {
 
     Err("Could not extract playlist ID from URL. Make sure it's a valid Deezer playlist URL."
         .to_string())
+}
+
+/// Extracts the track ID from a Deezer track URL.
+fn extract_track_id(url: &str) -> Result<String, String> {
+    if let Some(track_id) = url
+        .split("track/")
+        .nth(1)
+        .and_then(|s| s.split('?').next())
+        .and_then(|s| s.split('#').next())
+    {
+        if !track_id.is_empty() {
+            return Ok(track_id.to_string());
+        }
+    }
+
+    Err("Could not extract track ID from URL. Make sure it's a valid Deezer track URL.".to_string())
 }
