@@ -12,6 +12,7 @@ export interface DownloadJob {
   id: string;
   tracks: TrackInfo[];
   outputDir: string;
+  audioFormat: string;
 }
 
 interface QueuedTrack {
@@ -107,6 +108,7 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
           const result = await invoke<DownloadResult>('download_tracks', {
             tracks: job.tracks,
             outputDir: job.outputDir,
+            audioFormat: job.audioFormat,
           });
 
           // Ensure remaining pending tracks get a final status

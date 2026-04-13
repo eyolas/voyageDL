@@ -51,6 +51,7 @@ pub async fn download_tracks(
     state: State<'_, DownloadState>,
     tracks: Vec<TrackInfo>,
     output_dir: String,
+    audio_format: String,
 ) -> Result<DownloadSummary, String> {
     // Reset state at the start of a new download batch
     state.cancel_flag.store(false, Ordering::Relaxed);
@@ -130,6 +131,9 @@ pub async fn download_tracks(
         );
 
         // Build yt-dlp arguments
+        let is_m4a = audio_format == "m4a";
+        let fmt = if is_m4a { "m4a" } else { "mp3" };
+
         let output_template = format!(
             "{}/%(title)s.%(ext)s",
             output_dir.replace("\\", "/")
@@ -138,14 +142,20 @@ pub async fn download_tracks(
         let mut args = vec![
             "-x".to_string(),
             "--audio-format".to_string(),
-            "mp3".to_string(),
+            fmt.to_string(),
             "--audio-quality".to_string(),
             "0".to_string(),
-            "-o".to_string(),
-            output_template,
         ];
 
-        // Build ffmpeg metadata args for ID3 tags
+        // M4A supports embedded cover art natively
+        if is_m4a {
+            args.push("--embed-thumbnail".to_string());
+        }
+
+        args.push("-o".to_string());
+        args.push(output_template);
+
+        // Build ffmpeg metadata args
         let mut meta_flags = Vec::new();
         meta_flags.push(format!("-metadata \"artist={}\"", escape_metadata(&track.artist)));
         meta_flags.push(format!("-metadata \"title={}\"", escape_metadata(&track.title)));
@@ -159,8 +169,9 @@ pub async fn download_tracks(
             meta_flags.push(format!("-metadata \"date={}\"", escape_metadata(year)));
         }
 
+        let pp_suffix = if is_m4a { "" } else { " -id3v2_version 3" };
         args.push("--postprocessor-args".to_string());
-        args.push(format!("ffmpeg:{} -id3v2_version 3", meta_flags.join(" ")));
+        args.push(format!("ffmpeg:{}{}", meta_flags.join(" "), pp_suffix));
 
         args.push(track.url.clone());
 

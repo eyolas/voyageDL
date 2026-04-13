@@ -8,6 +8,7 @@ import { AppConfig } from '../types';
 
 const DEFAULT_CONFIG: AppConfig = {
   download_dir: '',
+  audio_format: 'mp3',
 };
 
 export function useConfig() {

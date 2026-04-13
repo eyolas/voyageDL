@@ -17,6 +17,7 @@ export interface TrackInfo {
 
 export interface AppConfig {
   download_dir: string;
+  audio_format: string;
 }
 
 export interface DownloadProgressEvent {

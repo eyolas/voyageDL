@@ -1359,6 +1359,56 @@
   font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
 }
 
+.format-toggle {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.format-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px var(--spacing-md);
+  background: var(--color-bg-glass);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: var(--font-body);
+}
+
+.format-option:hover {
+  background: var(--color-bg-glass-hover);
+  border-color: var(--color-border-light);
+}
+
+.format-option.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-very-light);
+}
+
+.format-name {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  color: var(--color-text-primary);
+}
+
+.format-option.active .format-name {
+  color: var(--color-primary);
+}
+
+.format-desc {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.format-option.active .format-desc {
+  color: var(--color-text-secondary);
+}
+
 .cache-actions {
   display: flex;
   flex-direction: column;

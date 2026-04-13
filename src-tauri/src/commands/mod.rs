@@ -63,4 +63,11 @@ pub struct Config {
     /// Directory where downloads are saved
     pub download_dir: String,
 
+    /// Audio format: "mp3" or "m4a"
+    #[serde(default = "default_audio_format")]
+    pub audio_format: String,
+}
+
+fn default_audio_format() -> String {
+    "mp3".to_string()
 }

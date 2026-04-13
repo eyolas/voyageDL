@@ -55,9 +55,10 @@ function App() {
       id: `job-${jobCounter}-${Date.now()}`,
       tracks,
       outputDir: config.download_dir,
+      audioFormat: config.audio_format || 'mp3',
     };
     setDownloadJobs((prev) => [...prev, job]);
-  }, [config.download_dir]);
+  }, [config.download_dir, config.audio_format]);
 
   const handleJobDone = useCallback((_jobId: string) => {
     // Keep the job in the list so the queue can display it as completed

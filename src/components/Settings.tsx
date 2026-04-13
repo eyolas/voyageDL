@@ -96,6 +96,27 @@ export function Settings({ config, onClose, onSave }: SettingsProps) {
             </div>
           </div>
 
+          {/* Audio Format */}
+          <div className="form-group">
+            <label className="form-label">Format audio</label>
+            <div className="format-toggle">
+              <button
+                className={`format-option ${(config.audio_format || 'mp3') === 'mp3' ? 'active' : ''}`}
+                onClick={() => onSave({ ...config, audio_format: 'mp3' })}
+              >
+                <span className="format-name">MP3</span>
+                <span className="format-desc">Compatible partout</span>
+              </button>
+              <button
+                className={`format-option ${config.audio_format === 'm4a' ? 'active' : ''}`}
+                onClick={() => onSave({ ...config, audio_format: 'm4a' })}
+              >
+                <span className="format-name">M4A</span>
+                <span className="format-desc">Meilleure qualite + cover</span>
+              </button>
+            </div>
+          </div>
+
           {/* Cache management */}
           <div className="form-group">
             <label className="form-label">Gestion du cache</label>

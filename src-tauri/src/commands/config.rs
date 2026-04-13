@@ -21,6 +21,7 @@ pub async fn get_config() -> Result<Config, String> {
             download_dir: dirs::download_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| "./downloads".to_string()),
+            audio_format: "mp3".to_string(),
         });
     }
 
