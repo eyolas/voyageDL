@@ -1,6 +1,7 @@
 /// Sidecar binary management.
 ///
 /// Handles finding and running external executables (yt-dlp, ffmpeg) as sidecars.
+/// Supports Tauri's naming convention with target triple suffixes.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -11,28 +12,53 @@ use tokio::process::Command as AsyncCommand;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Returns all candidate filenames for a sidecar binary.
+/// Tauri bundles sidecars with the target triple suffix.
+fn sidecar_candidates(binary_name: &str) -> Vec<String> {
+    let target = env!("TARGET");
+    let mut candidates = vec![
+        format!("{}-{}", binary_name, target),   // yt-dlp-aarch64-apple-darwin
+        binary_name.to_string(),                  // yt-dlp
+    ];
+
+    #[cfg(windows)]
+    {
+        // On Windows, also try with .exe extension
+        candidates.insert(0, format!("{}-{}.exe", binary_name, target));
+        candidates.push(format!("{}.exe", binary_name));
+    }
+
+    candidates
+}
+
 /// Finds a sidecar binary by name.
 ///
-/// This function attempts to locate a binary in the following order:
-/// 1. In the app's resource directory (for bundled sidecars in production)
-/// 2. In the system PATH (for development or system-installed binaries)
+/// Search order:
+/// 1. App's resource directory with target triple suffix (macOS production)
+/// 2. Same directory as executable with target triple suffix (Windows production)
+/// 3. Plain name in resources/exe directory (dev fallback)
+/// 4. System PATH
 pub fn find_sidecar(binary_name: &str) -> Result<PathBuf, String> {
-    // Try to find in app's resource directory first (production bundled)
+    let candidates = sidecar_candidates(binary_name);
+
     if let Ok(exe_path) = env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            let bundled_binary = exe_dir
-                .parent()
-                .map(|p| p.join("Resources").join(binary_name))
-                .filter(|p| p.exists());
-
-            if let Some(path) = bundled_binary {
-                return Ok(path);
+            // Check Resources directory (macOS app bundle)
+            if let Some(resources_dir) = exe_dir.parent().map(|p| p.join("Resources")) {
+                for name in &candidates {
+                    let path = resources_dir.join(name);
+                    if path.exists() {
+                        return Ok(path);
+                    }
+                }
             }
 
-            // Also check in the same directory as the executable
-            let same_dir_binary = exe_dir.join(binary_name);
-            if same_dir_binary.exists() {
-                return Ok(same_dir_binary);
+            // Check same directory as executable (Windows install)
+            for name in &candidates {
+                let path = exe_dir.join(name);
+                if path.exists() {
+                    return Ok(path);
+                }
             }
         }
     }
@@ -40,25 +66,19 @@ pub fn find_sidecar(binary_name: &str) -> Result<PathBuf, String> {
     // Try to find in system PATH
     if let Ok(path_var) = env::var("PATH") {
         for path_dir in env::split_paths(&path_var) {
-            let binary_path = path_dir.join(binary_name);
-
-            #[cfg(windows)]
-            {
-                let exe_path = path_dir.join(format!("{}.exe", binary_name));
-                if exe_path.exists() {
-                    return Ok(exe_path);
+            for name in &candidates {
+                let path = path_dir.join(name);
+                if path.exists() {
+                    return Ok(path);
                 }
-            }
-
-            if binary_path.exists() {
-                return Ok(binary_path);
             }
         }
     }
 
     Err(format!(
-        "Binary '{}' not found in PATH or app resources",
-        binary_name
+        "Binary '{}' not found in PATH or app resources (tried: {})",
+        binary_name,
+        candidates.join(", ")
     ))
 }
 
@@ -99,7 +119,6 @@ pub fn run_sidecar_command(binary_path: &Path, args: &[String]) -> Result<String
 }
 
 /// Runs a sidecar command asynchronously and returns its output.
-/// This allows Tauri events to be emitted between calls without blocking.
 pub async fn run_sidecar_command_async(binary_path: &Path, args: &[String]) -> Result<String, String> {
     let mut cmd = AsyncCommand::new(binary_path);
     cmd.args(args);
