@@ -6,11 +6,10 @@
 use crate::commands::analyze::AnalyzeState;
 use crate::commands::cache::FetchCache;
 use crate::commands::TrackInfo;
-use crate::utils::sidecar::find_sidecar;
+use crate::utils::sidecar::{find_sidecar, spawn_sidecar};
 use reqwest::Client;
 use serde::Deserialize;
 use tauri::{command, AppHandle, Emitter, Manager, State};
-use tokio::process::Command as AsyncCommand;
 
 /// Progress event emitted during Deezer playlist analysis.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -225,12 +224,7 @@ pub async fn fetch_deezer_playlist(
         let yt_args = vec!["--dump-json".to_string(), search_query.clone()];
 
         // Spawn yt-dlp with PID tracking for cancellation
-        let child = AsyncCommand::new(&yt_dlp_path)
-            .args(&yt_args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+        let child = spawn_sidecar(&yt_dlp_path, &yt_args)?;
 
         if let Some(pid) = child.id() {
             *analyze_state.current_pid.lock().unwrap() = Some(pid);

@@ -2,6 +2,7 @@
 ///
 /// Shared state for cancelling and pausing URL analysis (Deezer YT search loop).
 
+use crate::utils::sidecar::kill_process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{command, State};
@@ -45,9 +46,7 @@ pub async fn cancel_analyze(state: State<'_, AnalyzeState>) -> Result<(), String
     state.cancel_flag.store(true, Ordering::Relaxed);
 
     if let Some(pid) = *state.current_pid.lock().unwrap() {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .output();
+        kill_process(pid);
     }
 
     Ok(())

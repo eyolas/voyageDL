@@ -7,17 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::process::Command as AsyncCommand;
 
+/// On Windows, prevent child processes from opening console windows.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Finds a sidecar binary by name.
 ///
 /// This function attempts to locate a binary in the following order:
 /// 1. In the app's resource directory (for bundled sidecars in production)
 /// 2. In the system PATH (for development or system-installed binaries)
-///
-/// # Arguments
-/// * `binary_name` - Name of the binary to find (e.g., "yt-dlp", "ffmpeg")
-///
-/// # Returns
-/// Returns the path to the binary if found, or an error if not found.
 pub fn find_sidecar(binary_name: &str) -> Result<PathBuf, String> {
     // Try to find in app's resource directory first (production bundled)
     if let Ok(exe_path) = env::current_exe() {
@@ -44,7 +42,6 @@ pub fn find_sidecar(binary_name: &str) -> Result<PathBuf, String> {
         for path_dir in env::split_paths(&path_var) {
             let binary_path = path_dir.join(binary_name);
 
-            // On Windows, also check with .exe extension
             #[cfg(windows)]
             {
                 let exe_path = path_dir.join(format!("{}.exe", binary_name));
@@ -67,9 +64,16 @@ pub fn find_sidecar(binary_name: &str) -> Result<PathBuf, String> {
 
 /// Runs a sidecar command synchronously and returns its output.
 pub fn run_sidecar_command(binary_path: &Path, args: &[String]) -> Result<String, String> {
-    let output = Command::new(binary_path)
-        .args(args)
-        .output()
+    let mut cmd = Command::new(binary_path);
+    cmd.args(args);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output()
         .map_err(|e| format!("Failed to execute {}: {}", binary_path.display(), e))?;
 
     if !output.status.success() {
@@ -97,9 +101,16 @@ pub fn run_sidecar_command(binary_path: &Path, args: &[String]) -> Result<String
 /// Runs a sidecar command asynchronously and returns its output.
 /// This allows Tauri events to be emitted between calls without blocking.
 pub async fn run_sidecar_command_async(binary_path: &Path, args: &[String]) -> Result<String, String> {
-    let output = AsyncCommand::new(binary_path)
-        .args(args)
-        .output()
+    let mut cmd = AsyncCommand::new(binary_path);
+    cmd.args(args);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output()
         .await
         .map_err(|e| format!("Failed to execute {}: {}", binary_path.display(), e))?;
 
@@ -123,4 +134,39 @@ pub async fn run_sidecar_command_async(binary_path: &Path, args: &[String]) -> R
         .map_err(|e| format!("Failed to decode command output: {}", e))?;
 
     Ok(stdout)
+}
+
+/// Spawns a sidecar command asynchronously with hidden console window on Windows.
+/// Returns the Child process for PID tracking / cancellation.
+pub fn spawn_sidecar(binary_path: &Path, args: &[String]) -> Result<tokio::process::Child, String> {
+    let mut cmd = AsyncCommand::new(binary_path);
+    cmd.args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()
+        .map_err(|e| format!("Failed to execute {}: {}", binary_path.display(), e))
+}
+
+/// Kills a process by PID. Cross-platform (kill on unix, taskkill on windows).
+pub fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .arg(pid.to_string())
+            .output();
+    }
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/F"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let _ = cmd.output();
+    }
 }

@@ -4,13 +4,12 @@
 /// Supports cancellation of all downloads or individual tracks.
 
 use crate::commands::{DownloadSummary, TrackInfo};
-use crate::utils::sidecar::find_sidecar;
+use crate::utils::sidecar::{find_sidecar, kill_process, spawn_sidecar};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, State};
-use tokio::process::Command as AsyncCommand;
 
 /// Shared state for download cancellation.
 pub struct DownloadState {
@@ -279,9 +278,7 @@ pub async fn skip_track(state: State<'_, DownloadState>, track_id: String) -> Re
 /// Kills the currently running yt-dlp process.
 fn kill_current_process(state: &DownloadState) {
     if let Some(pid) = *state.current_pid.lock().unwrap() {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .output();
+        kill_process(pid);
     }
 }
 
@@ -291,12 +288,7 @@ async fn run_cancellable(
     args: &[String],
     state: &DownloadState,
 ) -> Result<String, String> {
-    let child = AsyncCommand::new(binary_path)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Failed to execute {}: {}", binary_path.display(), e))?;
+    let child = spawn_sidecar(binary_path, args)?;
 
     // Store PID for cancellation
     if let Some(pid) = child.id() {
