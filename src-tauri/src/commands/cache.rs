@@ -13,6 +13,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tauri::{command, State};
 
 pub struct FetchCache {
     /// In-memory layer (avoids repeated disk reads within the same session).
@@ -99,10 +100,51 @@ impl FetchCache {
         self.cache_dir.join(format!("{:x}.json", hash))
     }
 
+    /// Clears the URL-level cache (YouTube playlists/videos).
+    pub fn clear_url_cache(&self) -> usize {
+        self.memory.lock().unwrap().clear();
+        clear_json_files(&self.cache_dir)
+    }
+
+    /// Clears the per-track cache (Deezer YT search results).
+    pub fn clear_track_cache(&self) -> usize {
+        clear_json_files(&self.tracks_dir)
+    }
+
     fn track_cache_path(&self, query: &str) -> PathBuf {
         let mut hasher = DefaultHasher::new();
         query.hash(&mut hasher);
         let hash = hasher.finish();
         self.tracks_dir.join(format!("{:x}.json", hash))
     }
+}
+
+/// Deletes all .json files in a directory. Returns the number of files deleted.
+fn clear_json_files(dir: &PathBuf) -> usize {
+    let mut count = 0;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "json") {
+                if fs::remove_file(&path).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Clears the YouTube cache (URL-level).
+#[command]
+pub async fn clear_youtube_cache(cache: State<'_, FetchCache>) -> Result<usize, String> {
+    let count = cache.clear_url_cache();
+    Ok(count)
+}
+
+/// Clears the Deezer cache (per-track YT search results).
+#[command]
+pub async fn clear_deezer_cache(cache: State<'_, FetchCache>) -> Result<usize, String> {
+    let count = cache.clear_track_cache();
+    Ok(count)
 }

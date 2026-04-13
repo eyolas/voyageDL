@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use voyage_dl::commands::{
-    analyze::*, cache::FetchCache, config::*, youtube::*, deezer::*, download::*
+    analyze::*, cache::*, config::*, youtube::*, deezer::*, download::*
 };
 
 fn main() {
@@ -26,6 +26,10 @@ fn main() {
 
             // Deezer commands
             fetch_deezer_playlist,
+
+            // Cache commands
+            clear_youtube_cache,
+            clear_deezer_cache,
 
             // Download commands
             download_tracks,

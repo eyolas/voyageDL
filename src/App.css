@@ -1341,6 +1341,34 @@
   font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
 }
 
+.cache-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.cache-clear-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
+  background: var(--color-bg-glass);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.cache-clear-btn:hover {
+  background: var(--color-error-light);
+  border-color: rgba(251, 113, 133, 0.3);
+  color: var(--color-error);
+}
+
 .button-group {
   display: flex;
   gap: var(--spacing-md);
