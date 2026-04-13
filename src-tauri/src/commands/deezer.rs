@@ -37,7 +37,8 @@ struct DeezerTracksPage {
 
 #[derive(Debug, Deserialize)]
 struct DeezerTrack {
-    _id: u64,
+    #[allow(dead_code)]
+    id: u64,
     title: String,
     #[serde(default)]
     duration: u32,
@@ -90,10 +91,15 @@ pub async fn fetch_deezer_playlist(
         ));
     }
 
-    let playlist: DeezerPlaylistResponse = response
-        .json()
+    let body = response
+        .text()
         .await
-        .map_err(|e| format!("Failed to parse Deezer playlist response: {}", e))?;
+        .map_err(|e| format!("Failed to read Deezer response body: {}", e))?;
+
+    dev_log!("API response received ({} bytes)", body.len());
+
+    let playlist: DeezerPlaylistResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse Deezer playlist response: {} (at byte {})", e, e.column()))?;
 
     let mut deezer_tracks = playlist.tracks.data;
     let mut next_url = playlist.tracks.next;
@@ -111,9 +117,12 @@ pub async fn fetch_deezer_playlist(
             .await
             .map_err(|e| format!("Failed to fetch next page of tracks: {}", e))?;
 
-        let page: DeezerTracksPage = response
-            .json()
+        let page_body = response
+            .text()
             .await
+            .map_err(|e| format!("Failed to read tracks page body: {}", e))?;
+
+        let page: DeezerTracksPage = serde_json::from_str(&page_body)
             .map_err(|e| format!("Failed to parse tracks page: {}", e))?;
 
         dev_log!("Page {}: {} additional tracks", page_num, page.data.len());
