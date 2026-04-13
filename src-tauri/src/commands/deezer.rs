@@ -73,12 +73,7 @@ pub async fn fetch_deezer_playlist(
     cache: State<'_, FetchCache>,
     url: String,
 ) -> Result<Vec<TrackInfo>, String> {
-    // Check cache first
-    if let Some(cached) = cache.get(&url) {
-        dev_log!("Cache hit pour {} ({} pistes)", url, cached.len());
-        return Ok(cached);
-    }
-    dev_log!("Cache miss, demarrage du fetch pour {}", url);
+    dev_log!("Starting fetch for {}", url);
 
     let client = Client::new();
 
@@ -164,12 +159,7 @@ pub async fn fetch_deezer_playlist(
             deezer_track.artist.name, deezer_track.title
         );
 
-        dev_log!(
-            "[{}/{}] YT search: {} - {}",
-            idx + 1, total, deezer_track.artist.name, deezer_track.title
-        );
-
-        // Emit progress to frontend via the webview window
+        // Emit progress to frontend
         let progress = AnalyzeProgress {
             current: idx + 1,
             total,
@@ -178,17 +168,23 @@ pub async fn fetch_deezer_playlist(
             status: "searching".to_string(),
         };
         if let Some(window) = app.get_webview_window("main") {
-            if let Err(e) = window.emit("analyze-progress", &progress) {
-                dev_log!("ERREUR emit analyze-progress: {}", e);
-            }
-        } else {
-            dev_log!("ERREUR: fenetre 'main' introuvable");
+            let _ = window.emit("analyze-progress", &progress);
         }
-
-        // Yield to let the event loop deliver the event to the webview
         tokio::task::yield_now().await;
 
-        let yt_args = vec!["--dump-json".to_string(), search_query];
+        // Check per-track cache first
+        if let Some(cached_track) = cache.get_track(&search_query) {
+            dev_log!("[{}/{}] Cache hit: {} - {}", idx + 1, total, deezer_track.artist.name, deezer_track.title);
+            tracks.push(cached_track);
+            continue;
+        }
+
+        dev_log!(
+            "[{}/{}] YT search: {} - {}",
+            idx + 1, total, deezer_track.artist.name, deezer_track.title
+        );
+
+        let yt_args = vec!["--dump-json".to_string(), search_query.clone()];
 
         match run_sidecar_command_async(&yt_dlp_path, &yt_args).await {
             Ok(yt_json_str) => {
@@ -207,6 +203,9 @@ pub async fn fetch_deezer_playlist(
                                 .to_string(),
                             duration_seconds: deezer_track.duration,
                         };
+
+                        // Cache this track individually
+                        cache.set_track(&search_query, &track_info);
                         tracks.push(track_info);
                     } else {
                         dev_log!("[{}/{}] No YouTube ID in response", idx + 1, total);
@@ -228,10 +227,6 @@ pub async fn fetch_deezer_playlist(
             "No tracks found or could not search YouTube for any of them".to_string(),
         );
     }
-
-    // Store in cache
-    cache.set(url, tracks.clone());
-    dev_log!("Resultats sauvegardes dans le cache");
 
     Ok(tracks)
 }
