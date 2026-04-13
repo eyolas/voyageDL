@@ -17,6 +17,7 @@ export interface DownloadJob {
 
 interface QueuedTrack {
   queueId: string;
+  jobId: string;
   trackId: string;
   title: string;
   status: 'pending' | 'downloading' | 'completed' | 'error' | 'cancelled';
@@ -96,12 +97,17 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
           queueItemCounter += 1;
           return {
             queueId: `qi-${queueItemCounter}`,
+            jobId: job.id,
             trackId: t.id,
             title: t.title,
             status: 'pending' as const,
           };
         });
-        setQueuedTracks((prev) => [...prev, ...newTracks]);
+        setQueuedTracks((prev) => {
+          // Guard against React StrictMode double-execution
+          if (prev.some((t) => t.jobId === job.id)) return prev;
+          return [...prev, ...newTracks];
+        });
         setProgress((prev) => ({ current: prev.current, total: prev.total + job.tracks.length }));
 
         try {
