@@ -39,6 +39,9 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
   const [collapsed, setCollapsed] = useState(false);
   const processingRef = useRef(false);
   const processedJobsRef = useRef<Set<string>>(new Set());
+  const jobsRef = useRef<DownloadJob[]>([]);
+  const onJobDoneRef = useRef(onJobDone);
+  onJobDoneRef.current = onJobDone;
 
   // Listen to download-progress events
   useEffect(() => {
@@ -80,75 +83,79 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
     return () => { unlisten?.(); };
   }, []);
 
-  // Process jobs sequentially
+  // Keep jobsRef in sync with latest props
   useEffect(() => {
-    const processJobs = async () => {
-      if (processingRef.current) return;
+    jobsRef.current = jobs;
+    processQueue();
+  }, [jobs]);
 
-      for (const job of jobs) {
-        if (processedJobsRef.current.has(job.id)) continue;
+  // Process jobs sequentially, re-checking for new jobs after each completion
+  const processQueue = async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setIsProcessing(true);
 
-        processedJobsRef.current.add(job.id);
-        processingRef.current = true;
-        setIsProcessing(true);
-        setIsCancelling(false);
+    // Loop until no more unprocessed jobs remain (including ones added mid-processing)
+    while (true) {
+      const nextJob = jobsRef.current.find((j) => !processedJobsRef.current.has(j.id));
+      if (!nextJob) break;
 
-        const newTracks: QueuedTrack[] = job.tracks.map((t) => {
-          queueItemCounter += 1;
-          return {
-            queueId: `qi-${queueItemCounter}`,
-            jobId: job.id,
-            trackId: t.id,
-            title: t.title,
-            status: 'pending' as const,
-          };
+      processedJobsRef.current.add(nextJob.id);
+      setIsCancelling(false);
+
+      const newTracks: QueuedTrack[] = nextJob.tracks.map((t) => {
+        queueItemCounter += 1;
+        return {
+          queueId: `qi-${queueItemCounter}`,
+          jobId: nextJob.id,
+          trackId: t.id,
+          title: t.title,
+          status: 'pending' as const,
+        };
+      });
+      setQueuedTracks((prev) => {
+        // Guard against double-execution (React StrictMode)
+        if (prev.some((t) => t.jobId === nextJob.id)) return prev;
+        return [...prev, ...newTracks];
+      });
+      setProgress((prev) => ({ current: prev.current, total: prev.total + nextJob.tracks.length }));
+
+      try {
+        const result = await invoke<DownloadResult>('download_tracks', {
+          tracks: nextJob.tracks,
+          outputDir: nextJob.outputDir,
+          audioFormat: nextJob.audioFormat,
         });
-        setQueuedTracks((prev) => {
-          // Guard against React StrictMode double-execution
-          if (prev.some((t) => t.jobId === job.id)) return prev;
-          return [...prev, ...newTracks];
-        });
-        setProgress((prev) => ({ current: prev.current, total: prev.total + job.tracks.length }));
 
-        try {
-          const result = await invoke<DownloadResult>('download_tracks', {
-            tracks: job.tracks,
-            outputDir: job.outputDir,
-            audioFormat: job.audioFormat,
-          });
-
-          // Ensure remaining pending tracks get a final status
-          const jobTrackIds = new Set(job.tracks.map((t) => t.id));
-          setQueuedTracks((prev) =>
-            prev.map((t) =>
-              jobTrackIds.has(t.trackId) && t.status === 'pending'
-                ? { ...t, status: result.failed > 0 ? 'error' : 'completed' }
-                : t
-            )
-          );
-        } catch (error) {
-          console.error('Download job failed:', error);
-          const jobTrackIds = new Set(job.tracks.map((t) => t.id));
-          setQueuedTracks((prev) =>
-            prev.map((t) =>
-              jobTrackIds.has(t.trackId) && (t.status === 'pending' || t.status === 'downloading')
-                ? { ...t, status: 'error' }
-                : t
-            )
-          );
-        }
-
-        setCurrentTrack(null);
-        onJobDone(job.id);
+        // Ensure remaining pending tracks get a final status
+        const jobTrackIds = new Set(nextJob.tracks.map((t) => t.id));
+        setQueuedTracks((prev) =>
+          prev.map((t) =>
+            jobTrackIds.has(t.trackId) && t.status === 'pending'
+              ? { ...t, status: result.failed > 0 ? 'error' : 'completed' }
+              : t
+          )
+        );
+      } catch (error) {
+        console.error('Download job failed:', error);
+        const jobTrackIds = new Set(nextJob.tracks.map((t) => t.id));
+        setQueuedTracks((prev) =>
+          prev.map((t) =>
+            jobTrackIds.has(t.trackId) && (t.status === 'pending' || t.status === 'downloading')
+              ? { ...t, status: 'error' }
+              : t
+          )
+        );
       }
 
-      processingRef.current = false;
-      setIsProcessing(false);
-      setIsCancelling(false);
-    };
+      setCurrentTrack(null);
+      onJobDoneRef.current(nextJob.id);
+    }
 
-    processJobs();
-  }, [jobs]);
+    processingRef.current = false;
+    setIsProcessing(false);
+    setIsCancelling(false);
+  };
 
   const completedCount = queuedTracks.filter((t) => t.status === 'completed').length;
   const errorCount = queuedTracks.filter((t) => t.status === 'error').length;
@@ -160,7 +167,6 @@ export function DownloadQueue({ jobs, onJobDone }: DownloadQueueProps) {
   const handleClear = () => {
     setQueuedTracks([]);
     setProgress({ current: 0, total: 0 });
-    processedJobsRef.current.clear();
   };
 
   const handleCancelAll = async () => {

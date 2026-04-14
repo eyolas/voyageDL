@@ -60,8 +60,9 @@ function App() {
     setDownloadJobs((prev) => [...prev, job]);
   }, [config.download_dir, config.audio_format]);
 
-  const handleJobDone = useCallback((_jobId: string) => {
-    // Keep the job in the list so the queue can display it as completed
+  const handleJobDone = useCallback((jobId: string) => {
+    // Remove completed job from downloadJobs to avoid re-processing after queue clear
+    setDownloadJobs((prev) => prev.filter((j) => j.id !== jobId));
   }, []);
 
   if (loading) {
