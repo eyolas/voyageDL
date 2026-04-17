@@ -113,7 +113,7 @@ impl FetchCache {
 
     fn track_cache_path(&self, query: &str) -> PathBuf {
         let mut hasher = DefaultHasher::new();
-        query.hash(&mut hasher);
+        format!("v2:{}", query).hash(&mut hasher);
         let hash = hasher.finish();
         self.tracks_dir.join(format!("{:x}.json", hash))
     }

@@ -204,9 +204,14 @@ pub async fn download_tracks(
                 // Embed Deezer album cover if available
                 if has_deezer_cover {
                     if let Some(ref cover_url) = track.album_cover_url {
-                        let _ = embed_cover(
+                        if let Err(e) = embed_cover(
                             &output_dir, &track.title, fmt, cover_url, &ffmpeg_path
-                        ).await;
+                        ).await {
+                            eprintln!(
+                                "[cover] embed failed for '{}': {}",
+                                track.title, e
+                            );
+                        }
                     }
                 }
 
@@ -364,6 +369,11 @@ async fn embed_cover(
     cover_url: &str,
     ffmpeg_path: &Path,
 ) -> Result<(), String> {
+    eprintln!(
+        "[cover] start embed title='{}' fmt={} url={}",
+        track_title, fmt, cover_url
+    );
+
     // Download cover image
     let cover_bytes = reqwest::get(cover_url)
         .await
@@ -378,6 +388,7 @@ async fn embed_cover(
 
     // Find the audio file (yt-dlp uses %(title)s which may sanitize the name)
     let audio_path = find_audio_file(output_dir, track_title, fmt)?;
+    eprintln!("[cover] audio file resolved: {}", audio_path.display());
     let tmp_path = audio_path.with_extension(format!("tmp.{}", fmt));
 
     // Use ffmpeg to embed cover
@@ -397,11 +408,10 @@ async fn embed_cover(
             "-metadata:s:v".to_string(), "title=Album cover".to_string(),
             "-metadata:s:v".to_string(), "comment=Cover (front)".to_string(),
         ]);
-    } else {
-        args.extend([
-            "-disposition:v:0".to_string(), "attached_pic".to_string(),
-        ]);
     }
+    args.extend([
+        "-disposition:v:0".to_string(), "attached_pic".to_string(),
+    ]);
 
     args.push("-y".to_string());
     args.push(tmp_path.to_string_lossy().to_string());
@@ -410,17 +420,23 @@ async fn embed_cover(
     let output = child.wait_with_output().await
         .map_err(|e| format!("ffmpeg cover embed failed: {}", e))?;
 
-    // Clean up and replace original
+    // Clean up cover temp file
     let _ = std::fs::remove_file(&cover_path);
 
     if output.status.success() {
         let _ = std::fs::remove_file(&audio_path);
-        let _ = std::fs::rename(&tmp_path, &audio_path);
+        std::fs::rename(&tmp_path, &audio_path)
+            .map_err(|e| format!("Failed to replace audio file after cover embed: {}", e))?;
+        Ok(())
     } else {
         let _ = std::fs::remove_file(&tmp_path);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "ffmpeg exited with status {}: {}",
+            output.status,
+            stderr.trim()
+        ))
     }
-
-    Ok(())
 }
 
 /// Finds the downloaded audio file by title (yt-dlp may sanitize the filename).
