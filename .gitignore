@@ -10,6 +10,9 @@ src-tauri/target/
 # Sidecar binaries
 src-tauri/binaries/
 
+# ffmpeg build workspace (sources + objets, ~1Go)
+src-tauri/.build-ffmpeg/
+
 # Environment
 .env
 .env.*
