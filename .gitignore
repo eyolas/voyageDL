@@ -25,3 +25,10 @@ src-tauri/.build-ffmpeg/
 *~
 .DS_Store
 Thumbs.db
+
+# TypeScript build artifacts (tsc emits next to sources; not needed in repo)
+src/**/*.js
+src/**/*.d.ts
+src/**/*.d.ts.map
+src/**/*.js.map
+tsconfig.tsbuildinfo
