@@ -49,16 +49,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src-tauri/binaries
-          key: sidecars-${{ matrix.sidecars }}-${{ hashFiles('scripts/download-sidecars.sh') }}
+          key: sidecars-${{ matrix.sidecars }}-${{ hashFiles('scripts/download-sidecars.sh', 'src-tauri/scripts/build-ffmpeg-slim.sh') }}
 
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Download sidecars (yt-dlp + ffmpeg)
+      - name: Install ffmpeg build deps (macOS)
+        if: matrix.sidecars == 'macos'
+        run: brew install lame
+
+      - name: Prepare sidecars (yt-dlp + ffmpeg)
         shell: bash
         run: |
           if [ -d "src-tauri/binaries" ] && [ "$(ls -A src-tauri/binaries 2>/dev/null)" ]; then
-            echo "Sidecars already cached, skipping download"
+            echo "Sidecars already cached, skipping"
             ls -lh src-tauri/binaries/
           else
             bash scripts/download-sidecars.sh ${{ matrix.sidecars }}

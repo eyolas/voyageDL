@@ -38,7 +38,7 @@ download_windows() {
 }
 
 download_macos_arm() {
-    echo "📥 Downloading macOS ARM binaries..."
+    echo "📥 Preparing macOS ARM binaries..."
 
     # yt-dlp macOS universal
     echo "  → yt-dlp (macOS ARM)"
@@ -46,11 +46,9 @@ download_macos_arm() {
         "$YTDLP_BASE/yt-dlp_macos"
     chmod +x "$BINARIES_DIR/yt-dlp-aarch64-apple-darwin"
 
-    # ffmpeg macOS ARM
-    echo "  → ffmpeg (macOS ARM)"
-    curl -L -o "$BINARIES_DIR/ffmpeg-aarch64-apple-darwin" \
-        "$FFMPEG_BASE/ffmpeg-darwin-arm64"
-    chmod +x "$BINARIES_DIR/ffmpeg-aarch64-apple-darwin"
+    # ffmpeg macOS ARM: custom slim build (~2.5 MB instead of 43 MB)
+    echo "  → ffmpeg slim (macOS ARM) — custom build"
+    bash src-tauri/scripts/build-ffmpeg-slim.sh
 
     echo "✅ macOS ARM binaries ready"
 }
