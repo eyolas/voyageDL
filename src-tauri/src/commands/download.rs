@@ -175,10 +175,27 @@ pub async fn download_tracks(
         args.push("--postprocessor-args".to_string());
         args.push(format!("ffmpeg:{}{}", meta_flags.join(" "), pp_suffix));
 
+        // Capture the final filepath produced by yt-dlp: Deezer titles and the
+        // YouTube filenames diverge often (e.g. remaster 2015 vs 1998), so we have
+        // yt-dlp emit the exact path instead of guessing from title sanitization.
+        let filepath_marker = std::env::temp_dir()
+            .join(format!("voyagedl_{}_{}.path", std::process::id(), track_id));
+        let _ = std::fs::remove_file(&filepath_marker);
+        args.push("--print-to-file".to_string());
+        args.push("after_move:filepath".to_string());
+        args.push(filepath_marker.to_string_lossy().to_string());
+
         args.push(track.url.clone());
 
         // Run yt-dlp with cancellation support
-        match run_cancellable(&yt_dlp_path, &args, &state).await {
+        let run_result = run_cancellable(&yt_dlp_path, &args, &state).await;
+        let audio_path = std::fs::read_to_string(&filepath_marker)
+            .ok()
+            .map(|s| PathBuf::from(s.trim()))
+            .filter(|p| p.exists());
+        let _ = std::fs::remove_file(&filepath_marker);
+
+        match run_result {
             Ok(_) => {
                 // Check if cancelled or skipped during download
                 let was_skipped = state.skip_set.lock().unwrap().contains(&track_id);
@@ -204,13 +221,21 @@ pub async fn download_tracks(
                 // Embed Deezer album cover if available
                 if has_deezer_cover {
                     if let Some(ref cover_url) = track.album_cover_url {
-                        if let Err(e) = embed_cover(
-                            &output_dir, &track.title, fmt, cover_url, &ffmpeg_path
-                        ).await {
-                            eprintln!(
-                                "[cover] embed failed for '{}': {}",
-                                track.title, e
-                            );
+                        match audio_path.as_deref() {
+                            Some(path) => {
+                                if let Err(e) = embed_cover(
+                                    path, fmt, cover_url, &ffmpeg_path
+                                ).await {
+                                    eprintln!(
+                                        "[cover] embed failed for '{}': {}",
+                                        track.title, e
+                                    );
+                                }
+                            }
+                            None => eprintln!(
+                                "[cover] skip '{}': audio file path not available",
+                                track.title
+                            ),
                         }
                     }
                 }
@@ -363,15 +388,14 @@ fn escape_metadata(value: &str) -> String {
 
 /// Downloads a cover image from Deezer and embeds it into the audio file using ffmpeg.
 async fn embed_cover(
-    output_dir: &str,
-    track_title: &str,
+    audio_path: &Path,
     fmt: &str,
     cover_url: &str,
     ffmpeg_path: &Path,
 ) -> Result<(), String> {
     eprintln!(
-        "[cover] start embed title='{}' fmt={} url={}",
-        track_title, fmt, cover_url
+        "[cover] start embed file='{}' fmt={} url={}",
+        audio_path.display(), fmt, cover_url
     );
 
     // Download cover image
@@ -382,13 +406,13 @@ async fn embed_cover(
         .await
         .map_err(|e| format!("Failed to read cover bytes: {}", e))?;
 
-    let cover_path = PathBuf::from(output_dir).join("_cover_tmp.jpg");
+    let output_dir = audio_path.parent().ok_or_else(|| {
+        format!("Invalid audio path (no parent): {}", audio_path.display())
+    })?;
+    let cover_path = output_dir.join("_cover_tmp.jpg");
     std::fs::write(&cover_path, &cover_bytes)
         .map_err(|e| format!("Failed to write cover: {}", e))?;
 
-    // Find the audio file (yt-dlp uses %(title)s which may sanitize the name)
-    let audio_path = find_audio_file(output_dir, track_title, fmt)?;
-    eprintln!("[cover] audio file resolved: {}", audio_path.display());
     let tmp_path = audio_path.with_extension(format!("tmp.{}", fmt));
 
     // Use ffmpeg to embed cover
@@ -424,8 +448,8 @@ async fn embed_cover(
     let _ = std::fs::remove_file(&cover_path);
 
     if output.status.success() {
-        let _ = std::fs::remove_file(&audio_path);
-        std::fs::rename(&tmp_path, &audio_path)
+        let _ = std::fs::remove_file(audio_path);
+        std::fs::rename(&tmp_path, audio_path)
             .map_err(|e| format!("Failed to replace audio file after cover embed: {}", e))?;
         Ok(())
     } else {
@@ -439,27 +463,3 @@ async fn embed_cover(
     }
 }
 
-/// Finds the downloaded audio file by title (yt-dlp may sanitize the filename).
-fn find_audio_file(output_dir: &str, title: &str, fmt: &str) -> Result<PathBuf, String> {
-    // Try exact match first
-    let exact = PathBuf::from(output_dir).join(format!("{}.{}", title, fmt));
-    if exact.exists() {
-        return Ok(exact);
-    }
-
-    // Scan directory for a file containing part of the title
-    if let Ok(entries) = std::fs::read_dir(output_dir) {
-        let title_lower = title.to_lowercase();
-        let ext = format!(".{}", fmt);
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.to_lowercase().ends_with(&ext) && name.to_lowercase().contains(&title_lower[..title_lower.len().min(20)]) {
-                    return Ok(path);
-                }
-            }
-        }
-    }
-
-    Err(format!("Audio file not found for '{}'", title))
-}
