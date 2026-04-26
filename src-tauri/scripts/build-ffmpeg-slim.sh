@@ -108,10 +108,8 @@ BIN_DST="$OUT_DIR/ffmpeg-$HOST_TRIPLE"
 cp "$BIN_SRC" "$BIN_DST"
 strip -x "$BIN_DST"
 
-# Drop the ad-hoc signature inherited from the build tree, then re-sign for macOS
-if command -v codesign >/dev/null 2>&1; then
-  codesign --force --sign - "$BIN_DST" 2>/dev/null || true
-fi
+# No ad-hoc signing here — Tauri's bundler signs the .app (and re-signs
+# embedded sidecars) using the signingIdentity from tauri.conf.json.
 
 SIZE="$(du -h "$BIN_DST" | awk '{print $1}')"
 echo "==> OK: $BIN_DST ($SIZE)"
