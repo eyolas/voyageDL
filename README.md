@@ -46,6 +46,16 @@ cargo tauri build
 - **macOS**: `.dmg` in `src-tauri/target/release/bundle/dmg/`
 - **Windows**: `.msi` in `src-tauri/target/release/bundle/msi/`, `.exe` in `src-tauri/target/release/bundle/nsis/`
 
+### Installing the macOS build
+
+The `.app` is ad-hoc signed (no Apple Developer ID), so Gatekeeper blocks it on first launch — the app process starts but the window never appears. To unblock it after dragging `Voyage DL.app` into `/Applications`, run once:
+
+```bash
+xattr -cr "/Applications/Voyage DL.app"
+```
+
+Alternatively, after a blocked launch attempt, open **System Settings → Privacy & Security**, scroll to the bottom and click **Open Anyway**. Signing with a Developer ID + notarizing would remove this step but requires the Apple Developer Program ($99/year).
+
 ### Bundling yt-dlp & ffmpeg
 
 For a standalone app, include the binaries as Tauri sidecars:
